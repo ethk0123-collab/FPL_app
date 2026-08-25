@@ -44,7 +44,29 @@ else:
     # 2. League Overview Table
     st.subheader("📊 Manager Standings")
     summary_cols = ['Manager Name', 'Team Name', 'Team GW Points', 'Transfers Made', 'Card Used']
-    summary_df = df[summary_cols].drop_duplicates().sort_values(by='Team GW Points', ascending=False)
+    summary_df = df[summary_cols].drop_duplicates().sort_values(
+        by='Team GW Points', ascending=False
+    ).reset_index(drop=True)
+    summary_df['Ranking'] = summary_df['Team GW Points'].rank(
+        method='dense', ascending=False
+    ).astype(int)
+
+    contribution_by_rank = {4: 20, 5: 20, 6: 30, 7: 30}
+    summary_df['Prison token'] = -summary_df['Ranking'].map(
+        contribution_by_rank
+    ).fillna(0)
+    token_pool = -summary_df['Prison token'].sum()
+
+    rank_one = summary_df['Ranking'] == 1
+    rank_two = summary_df['Ranking'] == 2
+    summary_df.loc[rank_one, 'Prison token'] = token_pool * 0.7 / rank_one.sum()
+    summary_df.loc[rank_two, 'Prison token'] = token_pool * 0.3 / rank_two.sum()
+
+    summary_df['Prison token'] = summary_df['Prison token'].round(2)
+    summary_df = summary_df[
+        ['Ranking', 'Manager Name', 'Team Name', 'Team GW Points',
+         'Transfers Made', 'Card Used', 'Prison token']
+    ]
     st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
     # 3. Squad Inspector
