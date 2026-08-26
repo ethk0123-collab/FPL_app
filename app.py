@@ -20,7 +20,18 @@ with st.spinner("Fetching data from Fantasy Premier League API..."):
 if df.empty:
     st.warning("No data found for this League ID and Gameweek.")
 else:
-    st.title(f"🏆 League Dashboard — Gameweek {selected_gw}")
+    header_left, header_center, header_right = st.columns([1, 2, 1])
+    with header_center:
+        st.markdown(
+            "<h1 style='text-align: center;'>Prison Breaker FPL 26/27</h1>",
+            unsafe_allow_html=True,
+        )
+    with header_right:
+        gameweek_status = df['Gameweek Status'].iloc[0]
+        st.markdown(
+            f"<div style='text-align: right; padding-top: 1rem;'><strong>Game week Status</strong><br>{gameweek_status}</div>",
+            unsafe_allow_html=True,
+        )
     
     # 1. Weekly Highlights Cards
     top_score = df['Team GW Points'].max()
@@ -65,7 +76,7 @@ else:
     summary_df['Prison token'] = summary_df['Prison token'].round(2)
     summary_df = summary_df[
         ['Ranking', 'Manager Name', 'Team Name', 'Team GW Points',
-         'Transfers Made', 'Card Used', 'Prison token']
+         'Prison token', 'Transfers Made', 'Card Used']
     ]
     st.dataframe(summary_df, use_container_width=True, hide_index=True)
 

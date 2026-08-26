@@ -11,6 +11,17 @@ def get_league_data(league_id: int, gameweek: int):
     players_map = {p['id']: p for p in bootstrap['elements']}
     teams_map = {t['id']: t['name'] for t in bootstrap['teams']}
     positions_map = {pos['id']: pos['singular_name_short'] for pos in bootstrap['element_types']}
+    selected_event = next(
+        event for event in bootstrap['events'] if event['id'] == gameweek
+    )
+    if selected_event['finished']:
+        gameweek_status = 'Finished'
+    elif selected_event['is_current']:
+        gameweek_status = 'In Progress'
+    elif selected_event['is_next']:
+        gameweek_status = 'Upcoming'
+    else:
+        gameweek_status = 'Scheduled'
     
     # 2. Fetch Gameweek Fixtures data
     fixtures_url = f"https://fantasy.premierleague.com/api/fixtures/?event={gameweek}"
@@ -96,6 +107,7 @@ def get_league_data(league_id: int, gameweek: int):
                 
             all_rows.append({
                 "Gameweek": gameweek,
+                "Gameweek Status": gameweek_status,
                 "Manager Name": mgr['manager_name'],
                 "Team Name": mgr['team_name'],
                 "Team GW Points": team_gw_points,
@@ -111,4 +123,4 @@ def get_league_data(league_id: int, gameweek: int):
                 "Captain Status": cap_status
             })
 
-    return pd.DataFrame(all_rows)
+    return pd.DataFrame(all_rows)
