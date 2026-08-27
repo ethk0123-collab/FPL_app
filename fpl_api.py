@@ -1,6 +1,83 @@
 import requests
 import pandas as pd
 
+def get_weekly_overview(league_id: int):
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    bootstrap_url = "https://fantasy.premierleague.com/api/bootstrap-static/"
+    bootstrap = requests.get(bootstrap_url, headers=headers).json()
+    latest_confirmed_week = max(
+        (event['id'] for event in bootstrap['events'] if event['finished']),
+        default=0,
+    )
+
+    managers = []
+    page = 1
+    has_next = True
+    while has_next:
+        league_url = f"https://fantasy.premierleague.com/api/leagues-classic/{league_id}/standings/?page_standings={page}"
+        standings = requests.get(league_url, headers=headers).json().get(
+            'standings', {}
+        )
+        managers.extend(
+            (manager['entry'], manager['player_name'])
+            for manager in standings.get('results', [])
+        )
+        has_next = standings.get('has_next', False)
+        page += 1
+
+    weekly_scores = {
+        manager_name: [0] * 38 for _, manager_name in managers
+    }
+    weekly_tokens = {
+        manager_name: [0] * 38 for _, manager_name in managers
+    }
+    for week in range(1, latest_confirmed_week + 1):
+        week_scores = {}
+        for entry_id, manager_name in managers:
+            picks_url = f"https://fantasy.premierleague.com/api/entry/{entry_id}/event/{week}/picks/"
+            picks_response = requests.get(picks_url, headers=headers)
+            if picks_response.status_code == 200:
+                week_scores[manager_name] = picks_response.json().get(
+                    'entry_history', {}
+                ).get('points', 0)
+            else:
+                week_scores[manager_name] = 0
+
+        score_series = pd.Series(week_scores, dtype='float64')
+        rankings = score_series.rank(method='dense', ascending=False).astype(int)
+        contributions = -rankings.map({4: 20, 5: 20, 6: 30, 7: 30}).fillna(0)
+        token_pool = -contributions.sum()
+        first_place = rankings == 1
+        second_place = rankings == 2
+        if first_place.any():
+            contributions.loc[first_place] = token_pool * 0.7 / first_place.sum()
+        if second_place.any():
+            contributions.loc[second_place] = token_pool * 0.3 / second_place.sum()
+
+        for manager_name, score in week_scores.items():
+            weekly_scores[manager_name][week - 1] = score
+            weekly_tokens[manager_name][week - 1] = round(
+                contributions.get(manager_name, 0), 2
+            )
+
+    overview = []
+    for _, manager_name in managers:
+        row = {
+            'Team Member': manager_name,
+            'Total Scores': sum(weekly_scores[manager_name]),
+            'Total Prison Tokens': round(sum(weekly_tokens[manager_name]), 2),
+        }
+        row.update({
+            f'GW {week}': weekly_scores[manager_name][week - 1]
+            for week in range(1, 39)
+        })
+        overview.append(row)
+
+    return pd.DataFrame(overview, columns=[
+        'Team Member', 'Total Scores', 'Total Prison Tokens',
+        *[f'GW {week}' for week in range(1, 39)],
+    ])
+
 def get_league_data(league_id: int, gameweek: int):
     headers = {'User-Agent': 'Mozilla/5.0'}
     
@@ -123,4 +200,4 @@ def get_league_data(league_id: int, gameweek: int):
                 "Captain Status": cap_status
             })
 
-    return pd.DataFrame(all_rows)
+    return pd.DataFrame(all_rows)

@@ -1,12 +1,16 @@
 import streamlit as st
 import pandas as pd
-from fpl_api import get_league_data
+from fpl_api import get_league_data, get_weekly_overview
 
 st.set_page_config(page_title="FPL League Dashboard", layout="wide")
 
 @st.cache_data(ttl=300)
 def load_data(league_id, gw):
     return get_league_data(league_id, gw)
+
+@st.cache_data(ttl=300)
+def load_weekly_overview(league_id):
+    return get_weekly_overview(league_id)
 
 # Sidebar Controls
 st.sidebar.header("League Controls")
@@ -103,3 +107,8 @@ else:
             hide_index=True, 
             use_container_width=True
         )
+
+    st.subheader("📅 Weekly Overview")
+    with st.spinner("Loading weekly results..."):
+        weekly_overview_df = load_weekly_overview(league_id)
+    st.dataframe(weekly_overview_df, use_container_width=True, hide_index=True)
