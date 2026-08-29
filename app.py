@@ -29,6 +29,43 @@ def get_round_for_gameweek(gameweek):
     return 1
 
 
+def build_player_selection_heatmap(df, manager_order):
+    if df.empty:
+        return pd.DataFrame()
+
+    manager_columns = list(manager_order)
+    rows = []
+    selection_counts = {}
+
+    for player_name, player_df in df.groupby("Player", sort=True):
+        row = {
+            "Player Name": player_name,
+            "Club": player_df["Club"].dropna().iloc[0] if not player_df["Club"].dropna().empty else "",
+            "Position": player_df["Position"].dropna().iloc[0] if not player_df["Position"].dropna().empty else "",
+        }
+
+        selection_count = 0
+        for manager_name in manager_columns:
+            manager_pick = player_df[player_df["Manager Name"] == manager_name]
+            if manager_pick.empty:
+                row[manager_name] = ""
+                continue
+
+            pick = manager_pick.iloc[0]
+            row[manager_name] = "1" if not pd.isna(pick["Player"]) else ""
+            selection_count += 1
+
+        row["No. of Selections"] = selection_count
+        rows.append(row)
+        selection_counts[player_name] = selection_count
+
+    if not rows:
+        return pd.DataFrame(columns=["Player Name", "Club", "Position", "No. of Selections"] + manager_columns)
+
+    heatmap_df = pd.DataFrame(rows, columns=["Player Name", "Club", "Position", "No. of Selections"] + manager_columns)
+    return heatmap_df
+
+
 @st.cache_data(ttl=300)
 def load_data(league_id, gw):
     return get_league_data(league_id, gw)
@@ -123,6 +160,27 @@ else:
             bench[['Player', 'Position', 'Club', 'Opponent', 'Opponent Difficulty', 'Player Points']], 
             hide_index=True, 
             width="stretch"
+        )
+
+    st.subheader("🎯 Selected Player Heatmap")
+    manager_order = summary_df['Manager Name'].tolist()
+    heatmap_df = build_player_selection_heatmap(df, manager_order)
+
+    if not heatmap_df.empty:
+        def selection_style(row):
+            styles = ["" for _ in row]
+            for idx, col in enumerate(row.index):
+                if col in ["Player Name", "Club", "Position", "No. of Selections"]:
+                    continue
+                cell_value = row[col]
+                if cell_value == "1":
+                    styles[idx] = "background-color: #7bc67b; color: #0b5e2c; font-weight: bold;"
+            return styles
+
+        st.dataframe(
+            heatmap_df.style.apply(selection_style, axis=1),
+            use_container_width=True,
+            hide_index=True,
         )
 
     st.subheader("📅 Weekly Overview")
