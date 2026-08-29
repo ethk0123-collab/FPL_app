@@ -1,6 +1,23 @@
 import requests
 import pandas as pd
 
+
+def get_latest_gameweek():
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    bootstrap_url = "https://fantasy.premierleague.com/api/bootstrap-static/"
+    bootstrap = requests.get(bootstrap_url, headers=headers).json()
+
+    in_progress = [event['id'] for event in bootstrap.get('events', []) if event.get('is_current')]
+    if in_progress:
+        return max(in_progress)
+
+    finished = [event['id'] for event in bootstrap.get('events', []) if event.get('finished')]
+    if finished:
+        return max(finished)
+
+    return 1
+
+
 def get_weekly_overview(league_id: int):
     headers = {'User-Agent': 'Mozilla/5.0'}
     bootstrap_url = "https://fantasy.premierleague.com/api/bootstrap-static/"

@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from fpl_api import get_league_data, get_weekly_overview
+from fpl_api import get_latest_gameweek, get_league_data, get_weekly_overview
 
 st.set_page_config(page_title="FPL League Dashboard", layout="wide")
 
@@ -12,10 +12,12 @@ def load_data(league_id, gw):
 def load_weekly_overview(league_id):
     return get_weekly_overview(league_id)
 
+latest_gameweek = get_latest_gameweek()
+
 # Sidebar Controls
 st.sidebar.header("League Controls")
 league_id = st.sidebar.number_input("League ID", value=185376, step=1)
-selected_gw = st.sidebar.slider("Gameweek", min_value=1, max_value=38, value=1)
+selected_gw = st.sidebar.slider("Gameweek", min_value=1, max_value=38, value=latest_gameweek)
 
 # Load Data with Spinner
 with st.spinner("Fetching data from Fantasy Premier League API..."):
@@ -33,7 +35,7 @@ else:
     with header_right:
         gameweek_status = df['Gameweek Status'].iloc[0]
         st.markdown(
-            f"<div style='text-align: right; padding-top: 1rem;'><strong>Game week Status</strong><br>{gameweek_status}</div>",
+            f"<div style='text-align: right; padding-top: 1rem;'><strong>Game week {selected_gw} status</strong><br>{gameweek_status}</div>",
             unsafe_allow_html=True,
         )
     
