@@ -2,6 +2,21 @@ import requests
 import pandas as pd
 
 
+def build_weekly_scores_from_history(history_payload):
+    if not isinstance(history_payload, dict):
+        history_data = history_payload or []
+    else:
+        history_data = history_payload.get('current', []) or history_payload.get('history', []) or history_payload.get('past', [])
+
+    scores_by_event = {}
+    for entry in history_data:
+        event_id = entry.get('event')
+        if event_id is None:
+            continue
+        scores_by_event[int(event_id)] = float(entry.get('points', 0) or 0)
+    return scores_by_event
+
+
 def calculate_weekly_prison_tokens(rankings: pd.Series) -> pd.Series:
     contribution_by_rank = {4: 20, 5: 20, 6: 30, 7: 30}
     token_values = -rankings.map(contribution_by_rank).fillna(0)
@@ -60,8 +75,9 @@ def get_latest_gameweek():
 
 def get_weekly_overview(league_id: int):
     headers = {'User-Agent': 'Mozilla/5.0'}
+    session = requests.Session()
     bootstrap_url = "https://fantasy.premierleague.com/api/bootstrap-static/"
-    bootstrap = requests.get(bootstrap_url, headers=headers).json()
+    bootstrap = session.get(bootstrap_url, headers=headers, timeout=10).json()
     latest_confirmed_week = max(
         (event['id'] for event in bootstrap['events'] if event['finished']),
         default=0,
@@ -72,7 +88,7 @@ def get_weekly_overview(league_id: int):
     has_next = True
     while has_next:
         league_url = f"https://fantasy.premierleague.com/api/leagues-classic/{league_id}/standings/?page_standings={page}"
-        standings = requests.get(league_url, headers=headers).json().get(
+        standings = session.get(league_url, headers=headers, timeout=10).json().get(
             'standings', {}
         )
         managers.extend(
@@ -97,16 +113,22 @@ def get_weekly_overview(league_id: int):
     weekly_scores = {manager_name: [0] * 38 for _, manager_name in managers}
     weekly_tokens = {manager_name: [0] * 38 for _, manager_name in managers}
     weekly_ranks = {}
+    history_by_manager = {}
+
+    for entry_id, manager_name in managers:
+        history_url = f"https://fantasy.premierleague.com/api/entry/{entry_id}/history/"
+        history_response = session.get(history_url, headers=headers, timeout=10)
+        if history_response.status_code == 200:
+            payload = history_response.json()
+            history_by_manager[manager_name] = build_weekly_scores_from_history(payload)
+        else:
+            history_by_manager[manager_name] = {}
 
     for week in range(1, 39):
-        week_scores = {}
-        for entry_id, manager_name in managers:
-            picks_url = f"https://fantasy.premierleague.com/api/entry/{entry_id}/event/{week}/picks/"
-            picks_response = requests.get(picks_url, headers=headers)
-            if picks_response.status_code == 200:
-                week_scores[manager_name] = picks_response.json().get('entry_history', {}).get('points', 0)
-            else:
-                week_scores[manager_name] = 0
+        week_scores = {
+            manager_name: history_by_manager.get(manager_name, {}).get(week, 0)
+            for _, manager_name in managers
+        }
 
         if week <= latest_confirmed_week:
             score_series = pd.Series(week_scores, dtype='float64')
@@ -117,9 +139,11 @@ def get_weekly_overview(league_id: int):
             contributions = pd.Series({manager_name: 0 for _, manager_name in managers}, dtype='float64')
 
         weekly_ranks[week] = rankings.to_dict()
-        for manager_name, score in week_scores.items():
+        for _, manager_name in managers:
+            score = week_scores.get(manager_name, 0)
+            token = round(float(contributions.get(manager_name, 0)), 2)
             weekly_scores[manager_name][week - 1] = score
-            weekly_tokens[manager_name][week - 1] = round(float(contributions.get(manager_name, 0)), 2)
+            weekly_tokens[manager_name][week - 1] = token
 
     rows = []
     columns = [
