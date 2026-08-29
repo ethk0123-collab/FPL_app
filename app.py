@@ -99,7 +99,7 @@ else:
         ['Ranking', 'Manager Name', 'Team Name', 'Team GW Points',
          'Prison token', 'Transfers Made', 'Card Used']
     ]
-    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+    st.dataframe(summary_df, width="stretch", hide_index=True)
 
     # 3. Squad Inspector
     st.subheader("🔍 Squad Inspector")
@@ -115,14 +115,14 @@ else:
         st.dataframe(
             starters[['Player', 'Position', 'Club', 'Opponent', 'Opponent Difficulty', 'Player Points', 'Captain Status']], 
             hide_index=True, 
-            use_container_width=True
+            width="stretch"
         )
     with col_bench:
         st.markdown("**Bench**")
         st.dataframe(
             bench[['Player', 'Position', 'Club', 'Opponent', 'Opponent Difficulty', 'Player Points']], 
             hide_index=True, 
-            use_container_width=True
+            width="stretch"
         )
 
     st.subheader("📅 Weekly Overview")
@@ -153,4 +153,4 @@ else:
         ]
         display_df = weekly_overview_df[display_cols]
 
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    st.dataframe(display_df, width="stretch", hide_index=True)
