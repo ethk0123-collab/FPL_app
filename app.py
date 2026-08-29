@@ -1,8 +1,33 @@
 import streamlit as st
 import pandas as pd
-from fpl_api import get_latest_gameweek, get_league_data, get_weekly_overview
+from fpl_api import (
+    calculate_weekly_prison_tokens,
+    get_latest_gameweek,
+    get_league_data,
+    get_weekly_overview,
+)
 
 st.set_page_config(page_title="FPL League Dashboard", layout="wide")
+
+ROUND_GROUPS = {
+    1: [1, 2, 3, 4],
+    2: [5, 6, 7, 8],
+    3: [9, 10, 11, 12],
+    4: [13, 14, 15, 16],
+    5: [17, 18, 19, 20],
+    6: [21, 22, 23, 24],
+    7: [25, 26, 27, 28],
+    8: [29, 30, 31, 32],
+    9: [33, 34, 35, 36, 37, 38],
+}
+
+
+def get_round_for_gameweek(gameweek):
+    for round_no, weeks in ROUND_GROUPS.items():
+        if gameweek in weeks:
+            return round_no
+    return 1
+
 
 @st.cache_data(ttl=300)
 def load_data(league_id, gw):
@@ -13,6 +38,7 @@ def load_weekly_overview(league_id):
     return get_weekly_overview(league_id)
 
 latest_gameweek = get_latest_gameweek()
+latest_round = get_round_for_gameweek(latest_gameweek)
 
 # Sidebar Controls
 st.sidebar.header("League Controls")
@@ -68,18 +94,7 @@ else:
         method='dense', ascending=False
     ).astype(int)
 
-    contribution_by_rank = {4: 20, 5: 20, 6: 30, 7: 30}
-    summary_df['Prison token'] = -summary_df['Ranking'].map(
-        contribution_by_rank
-    ).fillna(0)
-    token_pool = -summary_df['Prison token'].sum()
-
-    rank_one = summary_df['Ranking'] == 1
-    rank_two = summary_df['Ranking'] == 2
-    summary_df.loc[rank_one, 'Prison token'] = token_pool * 0.7 / rank_one.sum()
-    summary_df.loc[rank_two, 'Prison token'] = token_pool * 0.3 / rank_two.sum()
-
-    summary_df['Prison token'] = summary_df['Prison token'].round(2)
+    summary_df['Prison token'] = calculate_weekly_prison_tokens(summary_df['Ranking'])
     summary_df = summary_df[
         ['Ranking', 'Manager Name', 'Team Name', 'Team GW Points',
          'Prison token', 'Transfers Made', 'Card Used']
@@ -113,4 +128,29 @@ else:
     st.subheader("📅 Weekly Overview")
     with st.spinner("Loading weekly results..."):
         weekly_overview_df = load_weekly_overview(league_id)
-    st.dataframe(weekly_overview_df, use_container_width=True, hide_index=True)
+
+    round_options = [0] + list(range(1, 10))
+    default_round_index = round_options.index(latest_round)
+    selected_round = st.selectbox(
+        "Display Round",
+        options=round_options,
+        index=default_round_index,
+        format_func=lambda value: "All Rounds" if value == 0 else f"Round {value}",
+    )
+
+    if selected_round == 0:
+        display_df = weekly_overview_df
+    else:
+        selected_round_label = f"Round {selected_round}"
+        display_cols = [
+            col for col in weekly_overview_df.columns
+            if col in [
+                ('Summary', '', 'Team Member'),
+                ('Summary', '', 'Total Scores'),
+                ('Summary', '', 'Total Prison Tokens'),
+            ]
+            or (isinstance(col, tuple) and len(col) == 3 and col[0] == selected_round_label)
+        ]
+        display_df = weekly_overview_df[display_cols]
+
+    st.dataframe(display_df, use_container_width=True, hide_index=True)

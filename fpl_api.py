@@ -2,6 +2,46 @@ import requests
 import pandas as pd
 
 
+def calculate_weekly_prison_tokens(rankings: pd.Series) -> pd.Series:
+    contribution_by_rank = {4: 20, 5: 20, 6: 30, 7: 30}
+    token_values = -rankings.map(contribution_by_rank).fillna(0)
+    token_pool = -token_values.sum()
+
+    rank_one = rankings == 1
+    rank_two = rankings == 2
+    if rank_one.any():
+        token_values.loc[rank_one] = token_pool * 0.7 / rank_one.sum()
+    if rank_two.any():
+        token_values.loc[rank_two] = token_pool * 0.3 / rank_two.sum()
+
+    return token_values.round(2)
+
+
+def calculate_round_prison_tokens(round_points: pd.Series) -> pd.Series:
+    ranking = round_points.rank(method='dense', ascending=False).astype(int)
+    contributions = pd.Series(0.0, index=round_points.index)
+
+    for manager_name, rank in ranking.items():
+        if rank in (4, 5):
+            contributions[manager_name] = 50
+        elif rank in (6, 7):
+            contributions[manager_name] = 100
+        else:
+            contributions[manager_name] = 0
+
+    pool = contributions.sum()
+    result = pd.Series(0.0, index=round_points.index)
+
+    rank_one = ranking == 1
+    rank_two = ranking == 2
+    if rank_one.any():
+        result.loc[rank_one] = pool * 0.7 / rank_one.sum()
+    if rank_two.any():
+        result.loc[rank_two] = pool * 0.3 / rank_two.sum()
+
+    return result.round(2)
+
+
 def get_latest_gameweek():
     headers = {'User-Agent': 'Mozilla/5.0'}
     bootstrap_url = "https://fantasy.premierleague.com/api/bootstrap-static/"
@@ -71,14 +111,7 @@ def get_weekly_overview(league_id: int):
         if week <= latest_confirmed_week:
             score_series = pd.Series(week_scores, dtype='float64')
             rankings = score_series.rank(method='dense', ascending=False).astype(int)
-            contributions = -rankings.map({4: 50, 5: 50, 6: 100, 7: 100}).fillna(0)
-            token_pool = -contributions.sum()
-            first_place = rankings == 1
-            second_place = rankings == 2
-            if first_place.any():
-                contributions.loc[first_place] = token_pool * 0.7 / first_place.sum()
-            if second_place.any():
-                contributions.loc[second_place] = token_pool * 0.3 / second_place.sum()
+            contributions = calculate_weekly_prison_tokens(rankings)
         else:
             rankings = pd.Series({manager_name: 0 for _, manager_name in managers}, dtype='int64')
             contributions = pd.Series({manager_name: 0 for _, manager_name in managers}, dtype='float64')
@@ -89,39 +122,42 @@ def get_weekly_overview(league_id: int):
             weekly_tokens[manager_name][week - 1] = round(float(contributions.get(manager_name, 0)), 2)
 
     rows = []
-    columns = [('Summary', 'Team Member'), ('Summary', 'Total Scores'), ('Summary', 'Total Prison Tokens')]
+    columns = [
+        ('Summary', '', 'Team Member'),
+        ('Summary', '', 'Total Scores'),
+        ('Summary', '', 'Total Prison Tokens'),
+    ]
     for round_no, round_weeks in round_groups.items():
         round_label = f'Round {round_no}'
         for week in round_weeks:
-            columns.append((round_label, f'GW {week}'))
-            columns.append((round_label, f'Rank {week}'))
-            columns.append((round_label, f'Token {week}'))
-        columns.append((round_label, 'Round Points'))
-        columns.append((round_label, 'Round Rank'))
-        columns.append((round_label, 'Round Tokens'))
-        columns.append((round_label, 'Round Subtotal'))
+            columns.append((round_label, f'GW {week}', 'Pts'))
+            columns.append((round_label, f'GW {week}', 'Rank'))
+            columns.append((round_label, f'GW {week}', 'Token'))
+        columns.append((round_label, 'Subtotal', 'Round Points'))
+        columns.append((round_label, 'Subtotal', 'Round Rank'))
+        columns.append((round_label, 'Subtotal', 'Round Tokens'))
+        columns.append((round_label, 'Subtotal', 'Round Subtotal'))
 
     for _, manager_name in managers:
         row = {
-            ('Summary', 'Team Member'): manager_name,
-            ('Summary', 'Total Scores'): sum(weekly_scores[manager_name]),
-            ('Summary', 'Total Prison Tokens'): round(sum(weekly_tokens[manager_name]), 2),
+            ('Summary', '', 'Team Member'): manager_name,
+            ('Summary', '', 'Total Scores'): sum(weekly_scores[manager_name]),
         }
 
+        gw_token_total = float(sum(weekly_tokens[manager_name]))
+        round_tokens_total = 0.0
         for round_no, round_weeks in round_groups.items():
             round_label = f'Round {round_no}'
             round_points = 0
             round_token_total = 0.0
-            round_week_tokens = []
             for week in round_weeks:
                 points = weekly_scores[manager_name][week - 1]
                 rank = weekly_ranks.get(week, {}).get(manager_name, 0)
                 token = weekly_tokens[manager_name][week - 1]
-                row[(round_label, f'GW {week}')] = points
-                row[(round_label, f'Rank {week}')] = rank
-                row[(round_label, f'Token {week}')] = token
+                row[(round_label, f'GW {week}', 'Pts')] = points
+                row[(round_label, f'GW {week}', 'Rank')] = rank
+                row[(round_label, f'GW {week}', 'Token')] = token
                 round_points += points
-                round_week_tokens.append(token)
                 round_token_total += token
 
             round_points_by_manager = {}
@@ -149,13 +185,15 @@ def get_weekly_overview(league_id: int):
                 round_contributions.loc[round_second] = round_pool * 0.3 / round_second.sum()
 
             round_tokens_for_manager = round_contributions.get(manager_name, 0.0)
-            round_subtotal = round_tokens_for_manager + round_token_total
+            round_tokens_total += round_tokens_for_manager
+            round_subtotal = round_token_total + round_tokens_for_manager
 
-            row[(round_label, 'Round Points')] = round_points
-            row[(round_label, 'Round Rank')] = int(round_rank)
-            row[(round_label, 'Round Tokens')] = round(round_tokens_for_manager, 2)
-            row[(round_label, 'Round Subtotal')] = round(round_subtotal, 2)
+            row[(round_label, 'Subtotal', 'Round Points')] = round_points
+            row[(round_label, 'Subtotal', 'Round Rank')] = int(round_rank)
+            row[(round_label, 'Subtotal', 'Round Tokens')] = round(round_tokens_for_manager, 2)
+            row[(round_label, 'Subtotal', 'Round Subtotal')] = round(round_subtotal, 2)
 
+        row[('Summary', '', 'Total Prison Tokens')] = round(gw_token_total + round_tokens_total, 2)
         rows.append(row)
 
     df = pd.DataFrame(rows, columns=pd.MultiIndex.from_tuples(columns))
