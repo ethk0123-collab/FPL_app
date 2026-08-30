@@ -1,9 +1,13 @@
 import streamlit as st
 import pandas as pd
 from fpl_api import (
+    PRISON_LEAGUE_ID,
     calculate_weekly_prison_tokens,
     get_latest_gameweek,
     get_league_data,
+    get_league_name,
+    get_league_title,
+    get_summary_columns,
     get_weekly_overview,
 )
 
@@ -35,13 +39,11 @@ def build_player_selection_heatmap(df, manager_order):
 
     manager_columns = list(manager_order)
     rows = []
-    selection_counts = {}
 
     for player_name, player_df in df.groupby("Player", sort=True):
         row = {
             "Player Name": player_name,
             "Club": player_df["Club"].dropna().iloc[0] if not player_df["Club"].dropna().empty else "",
-            "Position": player_df["Position"].dropna().iloc[0] if not player_df["Position"].dropna().empty else "",
         }
 
         selection_count = 0
@@ -57,13 +59,30 @@ def build_player_selection_heatmap(df, manager_order):
 
         row["No. of Selections"] = selection_count
         rows.append(row)
-        selection_counts[player_name] = selection_count
 
     if not rows:
-        return pd.DataFrame(columns=["Player Name", "Club", "Position", "No. of Selections"] + manager_columns)
+        return pd.DataFrame(columns=["Player Name", "Club", "No. of Selections"] + manager_columns)
 
-    heatmap_df = pd.DataFrame(rows, columns=["Player Name", "Club", "Position", "No. of Selections"] + manager_columns)
+    heatmap_df = pd.DataFrame(rows, columns=["Player Name", "Club", "No. of Selections"] + manager_columns)
+    heatmap_df = heatmap_df.sort_values(["No. of Selections", "Player Name"], ascending=[False, True]).reset_index(drop=True)
     return heatmap_df
+
+
+def flatten_weekly_overview_columns(df):
+    if df.empty:
+        return df.copy()
+
+    renamed = {}
+    for column in df.columns:
+        if isinstance(column, tuple):
+            label = " / ".join(str(part).strip() for part in column if str(part).strip())
+            if column == ('Summary', '', 'Team Member'):
+                label = 'Team Member'
+            renamed[column] = label
+        else:
+            renamed[column] = str(column)
+
+    return df.rename(columns=renamed)
 
 
 @st.cache_data(ttl=300)
@@ -79,8 +98,9 @@ latest_round = get_round_for_gameweek(latest_gameweek)
 
 # Sidebar Controls
 st.sidebar.header("League Controls")
-league_id = st.sidebar.number_input("League ID", value=185376, step=1)
+league_id = st.sidebar.number_input("League ID", value=PRISON_LEAGUE_ID, step=1)
 selected_gw = st.sidebar.slider("Gameweek", min_value=1, max_value=38, value=latest_gameweek)
+league_name = get_league_name(league_id) or "League"
 
 # Load Data with Spinner
 with st.spinner("Fetching data from Fantasy Premier League API..."):
@@ -92,7 +112,7 @@ else:
     header_left, header_center, header_right = st.columns([1, 2, 1])
     with header_center:
         st.markdown(
-            "<h1 style='text-align: center;'>Prison Breaker FPL 26/27</h1>",
+            f"<h1 style='text-align: center;'>{get_league_title(league_id, league_name)}</h1>",
             unsafe_allow_html=True,
         )
     with header_right:
@@ -123,20 +143,31 @@ else:
 
     # 2. League Overview Table
     st.subheader("📊 Manager Standings")
-    summary_cols = ['Manager Name', 'Team Name', 'Team GW Points', 'Transfers Made', 'Card Used']
-    summary_df = df[summary_cols].drop_duplicates().sort_values(
+    base_summary_cols = ['Manager Name', 'Team Name', 'Team GW Points', 'Transfers Made', 'Card Used']
+    summary_df = df[base_summary_cols].drop_duplicates().sort_values(
         by='Team GW Points', ascending=False
     ).reset_index(drop=True)
     summary_df['Ranking'] = summary_df['Team GW Points'].rank(
         method='dense', ascending=False
     ).astype(int)
 
-    summary_df['Prison token'] = calculate_weekly_prison_tokens(summary_df['Ranking'])
-    summary_df = summary_df[
-        ['Ranking', 'Manager Name', 'Team Name', 'Team GW Points',
-         'Prison token', 'Transfers Made', 'Card Used']
-    ]
-    st.dataframe(summary_df, width="stretch", hide_index=True)
+    if league_id == PRISON_LEAGUE_ID:
+        summary_df['Prison token'] = calculate_weekly_prison_tokens(summary_df['Ranking'])
+
+    display_summary_cols = ['Ranking', 'Manager Name', 'Team Name', 'Team GW Points']
+    if league_id == PRISON_LEAGUE_ID:
+        display_summary_cols.append('Prison token')
+    display_summary_cols.extend(['Transfers Made', 'Card Used'])
+    summary_df = summary_df[display_summary_cols]
+    st.dataframe(
+        summary_df,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            'Ranking': st.column_config.NumberColumn('Ranking', pinned=True),
+            'Manager Name': st.column_config.TextColumn('Manager Name', pinned=True),
+        },
+    )
 
     # 3. Squad Inspector
     st.subheader("🔍 Squad Inspector")
@@ -170,45 +201,62 @@ else:
         def selection_style(row):
             styles = ["" for _ in row]
             for idx, col in enumerate(row.index):
-                if col in ["Player Name", "Club", "Position", "No. of Selections"]:
+                if col in ["Player Name", "Club", "No. of Selections"]:
                     continue
                 cell_value = row[col]
                 if cell_value == "1":
                     styles[idx] = "background-color: #7bc67b; color: #0b5e2c; font-weight: bold;"
             return styles
 
+        heatmap_display = heatmap_df[
+            ["Player Name", "Club", "No. of Selections"] + manager_order
+        ]
+
         st.dataframe(
-            heatmap_df.style.apply(selection_style, axis=1),
+            heatmap_display.style.apply(selection_style, axis=1),
             use_container_width=True,
             hide_index=True,
+            column_config={
+                'Player Name': st.column_config.TextColumn('Player Name', pinned=True, width='large'),
+                'No. of Selections': st.column_config.NumberColumn('No. of Selections', pinned=True),
+            },
         )
 
-    st.subheader("📅 Weekly Overview")
-    with st.spinner("Loading weekly results..."):
-        weekly_overview_df = load_weekly_overview(league_id)
+    if league_id == PRISON_LEAGUE_ID:
+        st.subheader("📅 Weekly Overview")
+        with st.spinner("Loading weekly results..."):
+            weekly_overview_df = load_weekly_overview(league_id)
 
-    round_options = [0] + list(range(1, 10))
-    default_round_index = round_options.index(latest_round)
-    selected_round = st.selectbox(
-        "Display Round",
-        options=round_options,
-        index=default_round_index,
-        format_func=lambda value: "All Rounds" if value == 0 else f"Round {value}",
-    )
+        round_options = [0] + list(range(1, 10))
+        default_round_index = round_options.index(latest_round)
+        selected_round = st.selectbox(
+            "Display Round",
+            options=round_options,
+            index=default_round_index,
+            format_func=lambda value: "All Rounds" if value == 0 else f"Round {value}",
+        )
 
-    if selected_round == 0:
-        display_df = weekly_overview_df
-    else:
-        selected_round_label = f"Round {selected_round}"
-        display_cols = [
-            col for col in weekly_overview_df.columns
-            if col in [
-                ('Summary', '', 'Team Member'),
-                ('Summary', '', 'Total Scores'),
-                ('Summary', '', 'Total Prison Tokens'),
+        if selected_round == 0:
+            display_df = weekly_overview_df
+        else:
+            selected_round_label = f"Round {selected_round}"
+            display_cols = [
+                col for col in weekly_overview_df.columns
+                if col in [
+                    ('Summary', '', 'Team Member'),
+                    ('Summary', '', 'Total Scores'),
+                    ('Summary', '', 'Total Prison Tokens'),
+                ]
+                or (isinstance(col, tuple) and len(col) == 3 and col[0] == selected_round_label)
             ]
-            or (isinstance(col, tuple) and len(col) == 3 and col[0] == selected_round_label)
-        ]
-        display_df = weekly_overview_df[display_cols]
+            display_df = weekly_overview_df[display_cols]
 
-    st.dataframe(display_df, width="stretch", hide_index=True)
+        display_df = flatten_weekly_overview_columns(display_df)
+        st.dataframe(
+            display_df,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                'Team Member': st.column_config.TextColumn('Team Member', pinned=True),
+            },
+        )

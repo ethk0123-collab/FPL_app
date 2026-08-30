@@ -2,6 +2,42 @@ import requests
 import pandas as pd
 
 
+PRISON_LEAGUE_ID = 185376
+
+
+def get_league_name(league_id: int):
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    league_url = f"https://fantasy.premierleague.com/api/leagues-classic/{league_id}/standings/?page_standings=1"
+    response = requests.get(league_url, headers=headers, timeout=10)
+    if response.status_code != 200:
+        return None
+
+    league_data = response.json().get('league')
+    if not isinstance(league_data, dict):
+        return None
+
+    return league_data.get('name')
+
+
+def get_league_title(league_id: int, league_name: str | None = None) -> str:
+    name = (league_name or get_league_name(league_id) or '').strip()
+    if not name:
+        return 'FPL League Dashboard'
+    if 'FPL' in name:
+        return name
+    return f"{name} FPL 26/27"
+
+
+def get_summary_columns(league_id: int, columns):
+    summary_cols = list(columns)
+    if league_id == PRISON_LEAGUE_ID and 'Prison token' not in summary_cols:
+        insert_index = summary_cols.index('Transfers Made') if 'Transfers Made' in summary_cols else len(summary_cols)
+        summary_cols.insert(insert_index, 'Prison token')
+    elif league_id != PRISON_LEAGUE_ID and 'Prison token' in summary_cols:
+        summary_cols.remove('Prison token')
+    return summary_cols
+
+
 def build_weekly_scores_from_history(history_payload):
     if not isinstance(history_payload, dict):
         history_data = history_payload or []
