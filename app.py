@@ -222,7 +222,7 @@ else:
             use_container_width=True,
             hide_index=True,
             column_config={
-                'Player Name': st.column_config.TextColumn('Player Name', pinned=True, width='large'),
+                'Player Name': st.column_config.TextColumn('Player Name', pinned=True),
                 'No. of Selections': st.column_config.NumberColumn('No. of Selections', pinned=True),
             },
         )
