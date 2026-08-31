@@ -165,6 +165,29 @@ def calculate_round_prison_tokens(round_points: pd.Series) -> pd.Series:
     return result.round(2)
 
 
+def calculate_live_team_points(picks, live_points):
+    total = 0
+    for pick in picks or []:
+        multiplier = pick.get('multiplier', 1)
+        if multiplier == 0:
+            continue
+        total += live_points.get(pick.get('element'), 0) * int(multiplier)
+    return total
+
+
+def get_gameweek_data_status(events, gameweek: int):
+    event = next((event for event in events if event.get('id') == gameweek), None)
+    if event is None:
+        return 'upcoming'
+    if event.get('finished'):
+        return 'confirmed'
+    if event.get('is_current'):
+        return 'live'
+    if event.get('is_next') or gameweek > max((e.get('id', 0) for e in events), default=0):
+        return 'upcoming'
+    return 'upcoming'
+
+
 def get_latest_gameweek():
     headers = {'User-Agent': 'Mozilla/5.0'}
     bootstrap_url = "https://fantasy.premierleague.com/api/bootstrap-static/"
@@ -186,6 +209,8 @@ def get_weekly_overview(league_id: int):
     session = requests.Session()
     bootstrap_url = "https://fantasy.premierleague.com/api/bootstrap-static/"
     bootstrap = session.get(bootstrap_url, headers=headers, timeout=10).json()
+    current_event = next((event for event in bootstrap.get('events', []) if event.get('is_current')), None)
+    current_live_week = current_event.get('id') if current_event else 0
     latest_confirmed_week = max(
         (event['id'] for event in bootstrap['events'] if event['finished']),
         default=0,
@@ -232,13 +257,34 @@ def get_weekly_overview(league_id: int):
         else:
             history_by_manager[manager_name] = {}
 
+        if current_live_week > 0:
+            picks_url = f"https://fantasy.premierleague.com/api/entry/{entry_id}/event/{current_live_week}/picks/"
+            picks_response = session.get(picks_url, headers=headers, timeout=10)
+            if picks_response.status_code == 200:
+                picks_data = picks_response.json()
+                live_url = f"https://fantasy.premierleague.com/api/event/{current_live_week}/live/"
+                live_response = session.get(live_url, headers=headers, timeout=10)
+                if live_response.status_code == 200:
+                    live_points = {
+                        el['id']: el['stats']['total_points']
+                        for el in live_response.json().get('elements', [])
+                    }
+                    live_score = calculate_live_team_points(
+                        picks_data.get('picks', []),
+                        live_points,
+                    )
+                    history_by_manager[manager_name][current_live_week] = float(live_score)
+
     for week in range(1, 39):
         week_scores = {
             manager_name: history_by_manager.get(manager_name, {}).get(week, 0)
             for _, manager_name in managers
         }
 
-        if week <= latest_confirmed_week:
+        has_confirmed_data = week <= latest_confirmed_week
+        has_live_data = week == current_live_week and current_live_week > 0
+
+        if has_confirmed_data or has_live_data:
             score_series = pd.Series(week_scores, dtype='float64')
             rankings = score_series.rank(method='dense', ascending=False).astype(int)
             contributions = calculate_weekly_prison_tokens(rankings)
@@ -295,7 +341,9 @@ def get_weekly_overview(league_id: int):
             round_points_by_manager = {}
             for _, other_name in managers:
                 round_points_by_manager[other_name] = sum(
-                    weekly_scores[other_name][week - 1] for week in round_weeks if week <= latest_confirmed_week
+                    weekly_scores[other_name][week - 1]
+                    for week in round_weeks
+                    if week <= latest_confirmed_week or week == current_live_week
                 )
             round_rank_series = pd.Series(round_points_by_manager, dtype='float64')
             round_rank = round_rank_series.rank(method='dense', ascending=False).astype(int).get(manager_name, 0)
@@ -303,7 +351,9 @@ def get_weekly_overview(league_id: int):
             round_token_pool_values = {}
             for _, other_name in managers:
                 round_token_pool_values[other_name] = sum(
-                    weekly_tokens[other_name][week - 1] for week in round_weeks if week <= latest_confirmed_week
+                    weekly_tokens[other_name][week - 1]
+                    for week in round_weeks
+                    if week <= latest_confirmed_week or week == current_live_week
                 )
             round_token_series = pd.Series(round_token_pool_values, dtype='float64')
             round_token_rank = round_token_series.rank(method='dense', ascending=False).astype(int)
@@ -342,16 +392,21 @@ def get_league_data(league_id: int, gameweek: int):
     teams_map = {t['id']: t['name'] for t in bootstrap['teams']}
     positions_map = {pos['id']: pos['singular_name_short'] for pos in bootstrap['element_types']}
     selected_event = next(
-        event for event in bootstrap['events'] if event['id'] == gameweek
+        (event for event in bootstrap['events'] if event['id'] == gameweek),
+        None,
     )
-    if selected_event['finished']:
-        gameweek_status = 'Finished'
-    elif selected_event['is_current']:
-        gameweek_status = 'In Progress'
-    elif selected_event['is_next']:
+    if selected_event is None:
         gameweek_status = 'Upcoming'
     else:
-        gameweek_status = 'Scheduled'
+        data_status = get_gameweek_data_status(bootstrap['events'], gameweek)
+        if data_status == 'confirmed':
+            gameweek_status = 'Finished'
+        elif data_status == 'live':
+            gameweek_status = 'In Progress'
+        elif data_status == 'upcoming':
+            gameweek_status = 'Upcoming'
+        else:
+            gameweek_status = 'Scheduled'
     
     # 2. Fetch Gameweek Fixtures data
     fixtures_url = f"https://fantasy.premierleague.com/api/fixtures/?event={gameweek}"
@@ -407,12 +462,16 @@ def get_league_data(league_id: int, gameweek: int):
         picks_data = picks_resp.json()
         
         entry_history = picks_data.get('entry_history', {})
-        team_gw_points = entry_history.get('points', 0)
+        data_status = get_gameweek_data_status(bootstrap['events'], gameweek)
+        if data_status == 'live':
+            team_gw_points = calculate_live_team_points(picks_data.get('picks', []), live_points)
+        else:
+            team_gw_points = entry_history.get('points', 0)
         transfers_made = entry_history.get('event_transfers', 0)
-        
+
         active_chip = picks_data.get('active_chip')
         card_used = active_chip.replace('_', ' ').title() if active_chip else "None"
-        
+
         for pick in picks_data.get('picks', []):
             p_id = pick['element']
             player = players_map.get(p_id, {})

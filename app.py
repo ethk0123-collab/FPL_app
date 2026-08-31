@@ -267,7 +267,7 @@ else:
 
         st.dataframe(
             heatmap_display.style.apply(selection_style, axis=1),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 'Player Name': st.column_config.TextColumn('Player Name', pinned=True),
