@@ -12,11 +12,59 @@ from fpl_api import (
     get_league_data,
     get_league_name,
     get_league_title,
+    get_global_top_player_selections,
     get_summary_columns,
     get_weekly_overview,
 )
 
 st.set_page_config(page_title="FPL League Dashboard", layout="wide")
+
+
+@st.cache_data(ttl=300)
+def load_global_top_player_selections(gameweek):
+    return get_global_top_player_selections(gameweek)
+
+
+if "page" not in st.session_state:
+    st.session_state.page = "league"
+
+if st.sidebar.button("Top Players", use_container_width=True):
+    st.session_state.page = "top_players"
+
+if st.session_state.page == "top_players":
+    st.title("Top Players")
+    if st.sidebar.button("Back to League Dashboard", use_container_width=True):
+        st.session_state.page = "league"
+        st.rerun()
+
+    password = st.text_input("Password", type="password")
+    if password != "pw123":
+        if password:
+            st.error("Incorrect password.")
+        else:
+            st.info("Enter the password to view global top 100 player selections.")
+        st.stop()
+
+    latest_gameweek = get_latest_gameweek()
+    st.caption(f"Selections from the global top 100 managers, gameweek {latest_gameweek}")
+    with st.spinner("Fetching global top 100 selections..."):
+        top_players_df = load_global_top_player_selections(latest_gameweek)
+
+    st.dataframe(
+        top_players_df,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Player Name": st.column_config.TextColumn("Player Name", pinned=True),
+            "Club": st.column_config.TextColumn("Club"),
+            "Position": st.column_config.TextColumn("Position"),
+            "No. of Selections": st.column_config.NumberColumn(
+                "No. of Selections",
+                format="%d",
+            ),
+        },
+    )
+    st.stop()
 
 ROUND_GROUPS = {
     1: [1, 2, 3, 4],

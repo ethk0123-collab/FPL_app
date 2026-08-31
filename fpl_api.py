@@ -3,6 +3,7 @@ import pandas as pd
 
 
 PRISON_LEAGUE_ID = 185376
+GLOBAL_LEAGUE_ID = 314
 
 
 def get_league_name(league_id: int):
@@ -36,6 +37,77 @@ def get_summary_columns(league_id: int, columns):
     elif league_id != PRISON_LEAGUE_ID and 'Prison token' in summary_cols:
         summary_cols.remove('Prison token')
     return summary_cols
+
+
+def build_player_selection_summary(picks_by_manager, players_map, teams_map, positions_map):
+    selection_counts = {}
+    for picks in picks_by_manager:
+        for pick in picks:
+            player_id = pick.get('element')
+            player = players_map.get(player_id)
+            if not player:
+                continue
+
+            selection = selection_counts.setdefault(player_id, {
+                'Player Name': player.get('web_name', ''),
+                'Club': teams_map.get(player.get('team'), ''),
+                'Position': positions_map.get(player.get('element_type'), ''),
+                'No. of Selections': 0,
+            })
+            selection['No. of Selections'] += 1
+
+    columns = ['Player Name', 'Club', 'Position', 'No. of Selections']
+    return pd.DataFrame(selection_counts.values(), columns=columns).sort_values(
+        ['No. of Selections', 'Player Name'],
+        ascending=[False, True],
+    ).reset_index(drop=True)
+
+
+def get_global_top_player_selections(gameweek: int, manager_limit: int = 100):
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    session = requests.Session()
+
+    bootstrap_url = "https://fantasy.premierleague.com/api/bootstrap-static/"
+    bootstrap = session.get(bootstrap_url, headers=headers, timeout=10).json()
+    players_map = {player['id']: player for player in bootstrap.get('elements', [])}
+    teams_map = {team['id']: team['name'] for team in bootstrap.get('teams', [])}
+    positions_map = {
+        position['id']: position['singular_name_short']
+        for position in bootstrap.get('element_types', [])
+    }
+
+    picks_by_manager = []
+    page = 1
+    while len(picks_by_manager) < manager_limit:
+        standings_url = (
+            f"https://fantasy.premierleague.com/api/leagues-classic/"
+            f"{GLOBAL_LEAGUE_ID}/standings/?page_standings={page}"
+        )
+        standings_response = session.get(standings_url, headers=headers, timeout=10)
+        standings = standings_response.json().get('standings', {})
+        managers = standings.get('results', [])
+        if not managers:
+            break
+
+        for manager in managers[:manager_limit - len(picks_by_manager)]:
+            picks_url = (
+                f"https://fantasy.premierleague.com/api/entry/{manager['entry']}"
+                f"/event/{gameweek}/picks/"
+            )
+            picks_response = session.get(picks_url, headers=headers, timeout=10)
+            if picks_response.status_code == 200:
+                picks_by_manager.append(picks_response.json().get('picks', []))
+
+        if not standings.get('has_next'):
+            break
+        page += 1
+
+    return build_player_selection_summary(
+        picks_by_manager,
+        players_map,
+        teams_map,
+        positions_map,
+    )
 
 
 def build_weekly_scores_from_history(history_payload):
