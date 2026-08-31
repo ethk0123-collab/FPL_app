@@ -8,6 +8,7 @@ import pandas as pd
 from fpl_api import (
     PRISON_LEAGUE_ID,
     calculate_weekly_prison_tokens,
+    get_global_top_player_selections,
     get_latest_gameweek,
     get_league_data,
     get_league_name,

@@ -175,6 +175,52 @@ def calculate_live_team_points(picks, live_points):
     return total
 
 
+def build_player_selection_summary(picks, players, teams, positions):
+    selection_counts = {}
+
+    for manager_picks in picks or []:
+        for pick in manager_picks or []:
+            element_id = pick.get('element')
+            if element_id is None:
+                continue
+
+            player = players.get(element_id, {})
+            player_name = player.get('web_name') or f"Player {element_id}"
+            club_name = teams.get(player.get('team'), '')
+            position_name = positions.get(player.get('element_type'), '')
+
+            key = (player_name, club_name, position_name)
+            if key not in selection_counts:
+                selection_counts[key] = {
+                    'Player Name': player_name,
+                    'Club': club_name,
+                    'Position': position_name,
+                    'No. of Selections': 0,
+                }
+            selection_counts[key]['No. of Selections'] += 1
+
+    df = pd.DataFrame(list(selection_counts.values()))
+    if df.empty:
+        return pd.DataFrame(columns=['Player Name', 'Club', 'Position', 'No. of Selections'])
+
+    return df.sort_values(['No. of Selections', 'Player Name'], ascending=[False, True]).reset_index(drop=True)
+
+
+def get_global_top_player_selections(gameweek: int):
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    bootstrap_url = 'https://fantasy.premierleague.com/api/bootstrap-static/'
+    try:
+        bootstrap = requests.get(bootstrap_url, headers=headers, timeout=10).json()
+    except requests.RequestException:
+        return pd.DataFrame(columns=['Player Name', 'Club', 'Position', 'No. of Selections'])
+
+    players = {player['id']: player for player in bootstrap.get('elements', [])}
+    teams = {team['id']: team['name'] for team in bootstrap.get('teams', [])}
+    positions = {pos['id']: pos['singular_name_short'] for pos in bootstrap.get('element_types', [])}
+
+    return build_player_selection_summary([], players, teams, positions)
+
+
 def get_gameweek_data_status(events, gameweek: int):
     event = next((event for event in events if event.get('id') == gameweek), None)
     if event is None:
