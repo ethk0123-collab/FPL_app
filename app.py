@@ -1,5 +1,6 @@
 import os
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -16,6 +17,8 @@ from fpl_api import (
     get_global_top_player_selections,
     get_summary_columns,
     get_weekly_overview,
+    dataframe_to_jpeg,
+    send_email_with_attachment,
 )
 
 st.set_page_config(page_title="FPL League Dashboard", layout="wide")
@@ -314,3 +317,87 @@ else:
                 'Team Member': st.column_config.TextColumn('Team Member', pinned=True),
             },
         )
+        
+        # Add export button for weekly overview
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            if st.button("📥 Export as JPEG", key="export_weekly_overview"):
+                try:
+                    # Create a temporary file for the JPEG
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        output_path = os.path.join(tmpdir, "weekly_overview.jpeg")
+                        generated_path = dataframe_to_jpeg(
+                            display_df, 
+                            output_path, 
+                            title=f"Weekly Overview - Round {selected_round if selected_round != 0 else 'All'}"
+                        )
+                        
+                        # Read the file and offer download
+                        with open(generated_path, 'rb') as f:
+                            file_data = f.read()
+                            file_name = f"weekly_overview_round_{selected_round if selected_round != 0 else 'all'}"
+                            
+                            # Determine file extension
+                            if generated_path.endswith('.html'):
+                                file_ext = 'html'
+                                mime_type = 'text/html'
+                            else:
+                                file_ext = 'jpeg'
+                                mime_type = 'image/jpeg'
+                            
+                            st.download_button(
+                                label=f"⬇️ Download {file_ext.upper()}",
+                                data=file_data,
+                                file_name=f"{file_name}.{file_ext}",
+                                mime=mime_type
+                            )
+                        st.success(f"✅ Weekly overview exported successfully as {file_ext.upper()}!")
+                except Exception as e:
+                    st.error(f"❌ Error exporting weekly overview: {e}")
+        
+        # Check if gameweek status is finished and send email notification
+        gameweek_status = df['Gameweek Status'].iloc[0] if not df.empty else 'Upcoming'
+        
+        # Use session state to track if email has been sent for this gameweek
+        if 'last_gameweek_sent' not in st.session_state:
+            st.session_state.last_gameweek_sent = None
+        if 'last_email_status' not in st.session_state:
+            st.session_state.last_email_status = None
+        
+        # Send email when status changes to "Finished"
+        if gameweek_status == 'Finished' and st.session_state.last_email_status != 'Finished':
+            st.session_state.last_email_status = 'Finished'
+            try:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    output_path = os.path.join(tmpdir, "weekly_overview.jpeg")
+                    generated_path = dataframe_to_jpeg(
+                        display_df, 
+                        output_path, 
+                        title=f"Weekly Overview - Round {selected_round if selected_round != 0 else 'All'}"
+                    )
+                    
+                    # Send email using provided credentials
+                    email_subject = f"FPL Weekly Overview - Gameweek {selected_gw} Finished"
+                    email_body = f"""Hello,
+
+The gameweek {selected_gw} has finished. Please find the weekly overview table attached.
+
+League: {league_name}
+Gameweek: {selected_gw}
+Status: {gameweek_status}
+
+Best regards,
+FPL League Dashboard
+"""
+                    result = send_email_with_attachment(
+                        recipient_email='ethk0123@gmail.com',
+                        subject=email_subject,
+                        body=email_body,
+                        attachment_path=generated_path,
+                        sender_email=st.secrets.get("email", {}).get("sender", "etethk123@gmail.com"),
+                        sender_password=st.secrets.get("email", {}).get("password", "fk031102")
+                    )
+                    if result:
+                        st.info(f"📧 Weekly overview emailed to ethk0123@gmail.com")
+            except Exception as e:
+                st.warning(f"⚠️ Error sending email: {e}")

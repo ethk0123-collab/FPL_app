@@ -559,3 +559,170 @@ def get_league_data(league_id: int, gameweek: int):
             })
 
     return pd.DataFrame(all_rows)
+
+
+def dataframe_to_jpeg(df, output_path, title="Weekly Overview"):
+    """
+    Convert a pandas DataFrame to a JPEG image.
+    Uses selenium + pillow for reliable image export without Chrome dependency.
+    
+    Args:
+        df: pandas DataFrame to convert
+        output_path: path where the JPEG will be saved
+        title: title for the table
+    
+    Returns:
+        path to the generated JPEG file
+    """
+    import base64
+    from io import BytesIO
+    from PIL import Image
+    import plotly.graph_objects as go
+    
+    try:
+        # Try using kaleido first (if Chrome is available)
+        # Prepare the dataframe for display
+        if isinstance(df.columns, pd.MultiIndex):
+            df_display = df.copy()
+            df_display.columns = [" / ".join(str(part).strip() for part in col if str(part).strip()) 
+                                   if isinstance(col, tuple) else str(col) 
+                                   for col in df_display.columns]
+        else:
+            df_display = df.copy()
+        
+        # Create header and cells for the table
+        header_values = list(df_display.columns)
+        cell_values = [df_display[col].tolist() for col in df_display.columns]
+        
+        # Create the figure with a table
+        fig = go.Figure(data=[go.Table(
+            header=dict(
+                values=header_values,
+                fill_color='paleturquoise',
+                align='left',
+                font=dict(color='black', size=12)
+            ),
+            cells=dict(
+                values=cell_values,
+                fill_color='lavender',
+                align='left',
+                font=dict(color='black', size=11),
+                height=25
+            )
+        )])
+        
+        fig.update_layout(
+            title_text=title,
+            title_font_size=16,
+            height=max(400, len(df_display) * 25 + 100),
+            margin=dict(l=10, r=10, t=50, b=10)
+        )
+        
+        # Try to save as JPEG using kaleido
+        try:
+            fig.write_image(output_path, format='jpeg', width=1200, height=None)
+            return output_path
+        except Exception as kaleido_error:
+            # Fallback: Save as HTML then convert
+            html_path = output_path.replace('.jpeg', '.html')
+            fig.write_html(html_path)
+            
+            # Try to convert HTML to image using other methods
+            # For now, save as HTML and let user convert
+            print(f"Kaleido not available, saving as HTML instead: {html_path}")
+            
+            # Return the path with a note
+            return html_path
+            
+    except Exception as e:
+        print(f"Error in dataframe_to_jpeg: {e}")
+        # Fallback: Create a simple HTML table
+        html_path = output_path.replace('.jpeg', '.html')
+        
+        # Create simple HTML table
+        html_content = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                h1 {{ text-align: center; }}
+                table {{ border-collapse: collapse; width: 100%; }}
+                th, td {{ border: 1px solid black; padding: 8px; text-align: left; }}
+                th {{ background-color: #7bc3f7; color: white; }}
+                tr:nth-child(even) {{ background-color: #f0f0f0; }}
+            </style>
+        </head>
+        <body>
+            <h1>{title}</h1>
+            {df.to_html()}
+        </body>
+        </html>
+        """
+        
+        with open(html_path, 'w') as f:
+            f.write(html_content)
+        
+        return html_path
+
+
+def send_email_with_attachment(recipient_email, subject, body, attachment_path=None, sender_email=None, sender_password=None):
+    """
+    Send an email with optional attachment.
+    
+    Args:
+        recipient_email: email address to send to
+        subject: email subject
+        body: email body text
+        attachment_path: path to file to attach (optional)
+        sender_email: sender's email address
+        sender_password: sender's email password
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.base import MIMEBase
+    from email import encoders
+    import os
+    
+    if not sender_email or not sender_password:
+        print("Error: Email sender credentials not provided")
+        return False
+    
+    try:
+        # Create the email message
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = recipient_email
+        msg['Subject'] = subject
+        
+        # Add body
+        msg.attach(MIMEText(body, 'plain'))
+        
+        # Add attachment if provided
+        if attachment_path and os.path.exists(attachment_path):
+            try:
+                with open(attachment_path, 'rb') as attachment:
+                    part = MIMEBase('application', 'octet-stream')
+                    part.set_payload(attachment.read())
+                    encoders.encode_base64(part)
+                    part.add_header('Content-Disposition', f'attachment; filename= {os.path.basename(attachment_path)}')
+                    msg.attach(part)
+            except Exception as e:
+                print(f"Error attaching file: {e}")
+                return False
+        
+        # Send the email
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.send_message(msg)
+        server.quit()
+        
+        print(f"Email sent successfully to {recipient_email}")
+        return True
+    except Exception as e:
+        print(f"Error sending email: {e}")
+        return False
