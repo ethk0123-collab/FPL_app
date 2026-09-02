@@ -125,6 +125,16 @@ def build_weekly_scores_from_history(history_payload):
     return scores_by_event
 
 
+def custom_rank(scores: pd.Series) -> pd.Series:
+    """
+    Calculate rank as: number of people with higher score + 1
+    Teams with equal points get the same rank.
+    
+    Formula: rank = count(scores > x) + 1
+    """
+    return scores.apply(lambda x: sum(scores > x) + 1)
+
+
 def calculate_weekly_prison_tokens(rankings: pd.Series) -> pd.Series:
     contribution_by_rank = {4: 20, 5: 20, 6: 30, 7: 30}
     token_values = -rankings.map(contribution_by_rank).fillna(0)
@@ -141,7 +151,7 @@ def calculate_weekly_prison_tokens(rankings: pd.Series) -> pd.Series:
 
 
 def calculate_round_prison_tokens(round_points: pd.Series) -> pd.Series:
-    ranking = round_points.rank(method='dense', ascending=False).astype(int)
+    ranking = custom_rank(round_points)
     contributions = pd.Series(0.0, index=round_points.index)
 
     for manager_name, rank in ranking.items():
@@ -332,7 +342,7 @@ def get_weekly_overview(league_id: int):
 
         if has_confirmed_data or has_live_data:
             score_series = pd.Series(week_scores, dtype='float64')
-            rankings = score_series.rank(method='dense', ascending=False).astype(int)
+            rankings = custom_rank(score_series)
             contributions = calculate_weekly_prison_tokens(rankings)
         else:
             rankings = pd.Series({manager_name: 0 for _, manager_name in managers}, dtype='int64')
@@ -392,7 +402,7 @@ def get_weekly_overview(league_id: int):
                     if week <= latest_confirmed_week or week == current_live_week
                 )
             round_rank_series = pd.Series(round_points_by_manager, dtype='float64')
-            round_rank = round_rank_series.rank(method='dense', ascending=False).astype(int).get(manager_name, 0)
+            round_rank = custom_rank(round_rank_series).get(manager_name, 0)
 
             round_token_pool_values = {}
             for _, other_name in managers:
@@ -402,7 +412,7 @@ def get_weekly_overview(league_id: int):
                     if week <= latest_confirmed_week or week == current_live_week
                 )
             round_token_series = pd.Series(round_token_pool_values, dtype='float64')
-            round_token_rank = round_token_series.rank(method='dense', ascending=False).astype(int)
+            round_token_rank = custom_rank(round_token_series)
             round_contributions = -round_token_rank.map({4: 50, 5: 50, 6: 100, 7: 100}).fillna(0)
             round_pool = -round_contributions.sum()
             round_first = round_token_rank == 1
@@ -561,108 +571,165 @@ def get_league_data(league_id: int, gameweek: int):
     return pd.DataFrame(all_rows)
 
 
-def dataframe_to_jpeg(df, output_path, title="Weekly Overview"):
+def dataframe_to_png(df, output_path, title="Weekly Overview"):
     """
-    Convert a pandas DataFrame to a JPEG image.
-    Uses selenium + pillow for reliable image export without Chrome dependency.
+    Convert a pandas DataFrame to a PNG image using matplotlib.
+    Reorders columns and wraps header text for better readability.
     
     Args:
         df: pandas DataFrame to convert
-        output_path: path where the JPEG will be saved
+        output_path: path where the PNG will be saved (should end with .png)
         title: title for the table
     
     Returns:
-        path to the generated JPEG file
+        path to the generated PNG file
     """
-    import base64
-    from io import BytesIO
-    from PIL import Image
-    import plotly.graph_objects as go
+    import matplotlib.pyplot as plt
+    from textwrap import wrap
+    import re
     
     try:
-        # Try using kaleido first (if Chrome is available)
-        # Prepare the dataframe for display
-        if isinstance(df.columns, pd.MultiIndex):
-            df_display = df.copy()
+        # Work with original MultiIndex structure to reorder columns
+        df_display = df.copy()
+        column_order = []
+        
+        # 1. Add Summary / Team Member
+        if ('Summary', 'Team Member') in df_display.columns:
+            column_order.append(('Summary', 'Team Member'))
+        
+        # 2. Add Round 1 summary columns in order
+        for col_name in ['Round Points', 'Round Rank', 'Round Tokens', 'Round Subtotal']:
+            if ('Round 1', col_name) in df_display.columns:
+                column_order.append(('Round 1', col_name))
+        
+        # 3. Extract and sort GW columns by gameweek number and type (Pts, Rank, Token)
+        gw_columns = {}  # {gw_number: [columns]}
+        
+        for col_tuple in df_display.columns:
+            if isinstance(col_tuple, tuple) and len(col_tuple) >= 2:
+                level0 = str(col_tuple[0]).strip()
+                level1 = str(col_tuple[1]).strip()
+                
+                # Look for GW columns
+                if level0.startswith('Round') and 'GW' in level1:
+                    # Extract GW number from level1 like "GW1Pts"
+                    match = re.search(r'GW(\d+)', level1)
+                    if match:
+                        gw_num = int(match.group(1))
+                        if gw_num not in gw_columns:
+                            gw_columns[gw_num] = []
+                        gw_columns[gw_num].append(col_tuple)
+        
+        # Sort columns within each GW: Pts, Rank, Token order
+        type_order = {'Pts': 0, 'Rank': 1, 'Token': 2}
+        for gw_num in sorted(gw_columns.keys()):
+            cols = gw_columns[gw_num]
+            def get_type_priority(col_tuple):
+                level1 = str(col_tuple[1]).strip()
+                # Extract type (Pts, Rank, or Token) from the second level
+                for type_str, priority in type_order.items():
+                    if type_str in level1:
+                        return priority
+                return 3
+            
+            sorted_cols = sorted(cols, key=get_type_priority)
+            column_order.extend(sorted_cols)
+        
+        # Add any remaining columns not yet added
+        for col in df_display.columns:
+            if col not in column_order:
+                column_order.append(col)
+        
+        # Reorder the dataframe
+        df_display = df_display[column_order]
+        
+        # Flatten column names for display
+        if isinstance(df_display.columns, pd.MultiIndex):
             df_display.columns = [" / ".join(str(part).strip() for part in col if str(part).strip()) 
-                                   if isinstance(col, tuple) else str(col) 
                                    for col in df_display.columns]
-        else:
-            df_display = df.copy()
         
-        # Create header and cells for the table
-        header_values = list(df_display.columns)
-        cell_values = [df_display[col].tolist() for col in df_display.columns]
+        # Ensure the output path ends with .png
+        if not output_path.endswith('.png'):
+            output_path = output_path.replace('.jpeg', '.png').replace('.html', '.png')
+            if not output_path.endswith('.png'):
+                output_path = output_path + '.png'
         
-        # Create the figure with a table
-        fig = go.Figure(data=[go.Table(
-            header=dict(
-                values=header_values,
-                fill_color='paleturquoise',
-                align='left',
-                font=dict(color='black', size=12)
-            ),
-            cells=dict(
-                values=cell_values,
-                fill_color='lavender',
-                align='left',
-                font=dict(color='black', size=11),
-                height=25
-            )
-        )])
+        # Create figure and axis with more space for wrapped headers
+        fig, ax = plt.subplots(figsize=(20, max(10, len(df_display) * 0.45)))
+        ax.axis('tight')
+        ax.axis('off')
         
-        fig.update_layout(
-            title_text=title,
-            title_font_size=16,
-            height=max(400, len(df_display) * 25 + 100),
-            margin=dict(l=10, r=10, t=50, b=10)
-        )
+        # Create table with wrapped headers
+        table_data = []
+        headers = df_display.columns.tolist()
         
-        # Try to save as JPEG using kaleido
-        try:
-            fig.write_image(output_path, format='jpeg', width=1200, height=None)
-            return output_path
-        except Exception as kaleido_error:
-            # Fallback: Save as HTML then convert
-            html_path = output_path.replace('.jpeg', '.html')
-            fig.write_html(html_path)
-            
-            # Try to convert HTML to image using other methods
-            # For now, save as HTML and let user convert
-            print(f"Kaleido not available, saving as HTML instead: {html_path}")
-            
-            # Return the path with a note
-            return html_path
-            
+        # Wrap header text
+        wrapped_headers = []
+        for header in headers:
+            # Wrap text to max 15 chars per line for headers
+            wrapped = '\n'.join(wrap(str(header), width=12))
+            wrapped_headers.append(wrapped)
+        
+        table_data.append(wrapped_headers)
+        
+        for _, row in df_display.iterrows():
+            table_data.append(row.tolist())
+        
+        # Calculate column widths - make first column wider for Team Member
+        col_widths = [0.10] + [0.06] * (len(df_display.columns) - 1)
+        
+        table = ax.table(cellText=table_data, cellLoc='center', loc='center',
+                        colWidths=col_widths)
+        
+        table.auto_set_font_size(False)
+        table.set_fontsize(8)
+        table.scale(1, 2.2)  # Increase row height for wrapped headers
+        
+        # Style header row with text wrapping
+        for i in range(len(df_display.columns)):
+            cell = table[(0, i)]
+            cell.set_facecolor('#4472C4')
+            cell.set_text_props(weight='bold', color='white', ha='center', va='center')
+            cell.set_height(0.08)  # Increase header cell height
+        
+        # Style data rows with alternating colors
+        for i in range(1, len(table_data)):
+            for j in range(len(df_display.columns)):
+                cell = table[(i, j)]
+                if i % 2 == 0:
+                    cell.set_facecolor('#E7E6E6')
+                else:
+                    cell.set_facecolor('#F2F2F2')
+                cell.set_text_props(ha='center', va='center')
+        
+        # Add title
+        plt.title(title, fontsize=14, fontweight='bold', pad=20)
+        
+        # Save to file
+        plt.savefig(output_path, bbox_inches='tight', dpi=100, facecolor='white')
+        plt.close(fig)
+        
+        return output_path
+        
     except Exception as e:
-        print(f"Error in dataframe_to_jpeg: {e}")
-        # Fallback: Create a simple HTML table
-        html_path = output_path.replace('.jpeg', '.html')
-        
-        # Create simple HTML table
-        html_content = f"""
-        <html>
-        <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                h1 {{ text-align: center; }}
-                table {{ border-collapse: collapse; width: 100%; }}
-                th, td {{ border: 1px solid black; padding: 8px; text-align: left; }}
-                th {{ background-color: #7bc3f7; color: white; }}
-                tr:nth-child(even) {{ background-color: #f0f0f0; }}
-            </style>
-        </head>
-        <body>
-            <h1>{title}</h1>
-            {df.to_html()}
-        </body>
-        </html>
-        """
-        
-        with open(html_path, 'w') as f:
-            f.write(html_content)
-        
-        return html_path
+        print(f"Error in dataframe_to_png: {e}")
+        raise
+
+
+def dataframe_to_jpeg(df, output_path, title="Weekly Overview"):
+    """
+    Legacy function for backward compatibility. 
+    Converts DataFrame to PNG instead (user prefers PNG format).
+    
+    Args:
+        df: pandas DataFrame to convert
+        output_path: path where the image will be saved
+        title: title for the table
+    
+    Returns:
+        path to the generated PNG file
+    """
+    return dataframe_to_png(df, output_path, title)
 
 
 def send_email_with_attachment(recipient_email, subject, body, attachment_path=None, sender_email=None, sender_password=None):
