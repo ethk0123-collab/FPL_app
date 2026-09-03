@@ -585,6 +585,7 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
         path to the generated PNG file
     """
     import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
     from textwrap import wrap
     
     try:
@@ -601,22 +602,35 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
             ordered_columns.extend(column for column in columns if column[0] == 'Summary' and column not in ordered_columns)
             ordered_columns.extend(column for column in columns if column not in ordered_columns)
             df_display = df_display[ordered_columns]
-            table_headers = [
-                ["" for _ in ordered_columns],
-                ["" for _ in ordered_columns],
-                [str(column[2]) for column in ordered_columns],
-            ]
-            if ordered_columns:
-                table_headers[0][0] = "Round 1"
-                table_headers[1][0] = "Team Member"
-            for index, column in enumerate(ordered_columns[1:], start=1):
-                table_headers[1][index] = (
+            group_labels = []
+            for column in ordered_columns[1:]:
+                group_labels.append(
                     f'{column[0]} / {column[1].replace(" ", "")}'
                     if column[1].startswith('GW ')
                     else column[1] or 'Summary'
                 )
+            group_spans = []
+            for index, group in enumerate(group_labels):
+                if index == 0 or group != group_labels[index - 1]:
+                    group_spans.append([group, index + 1, 1])
+                else:
+                    group_spans[-1][2] += 1
+
+            table_headers = [
+                ["" for _ in ordered_columns],
+                ["" for _ in ordered_columns],
+                ["" for _ in ordered_columns],
+            ]
             if ordered_columns:
-                table_headers[1][-1] = table_headers[1][-1] or 'Summary'
+                round_names = list(dict.fromkeys(
+                    column[0] for column in ordered_columns if column[0] != 'Summary'
+                ))
+                table_headers[0][0] = round_names[0] if len(round_names) == 1 else title
+                table_headers[1][0] = "Team Member"
+                for group, start, _ in group_spans:
+                    table_headers[1][start] = group
+                for index, column in enumerate(ordered_columns[1:], start=1):
+                    table_headers[2][index] = str(column[2])
         else:
             table_headers = [[str(column) for column in df_display.columns]]
         
@@ -628,44 +642,36 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
         
         # Create figure and axis with more space for the grouped headers.
         header_rows = len(table_headers)
-        fig, ax = plt.subplots(figsize=(20, max(10, len(df_display) * 0.45)))
+        figure_height = max(3.2, len(df_display) * 0.38 + (1.5 if is_grouped else 1.0))
+        fig, ax = plt.subplots(figsize=(20, figure_height))
         ax.axis('tight')
         ax.axis('off')
-        
+
         table_data = []
-        for header_row in table_headers:
-            table_data.append(['\n'.join(wrap(header, width=14)) for header in header_row])
-        
+        if not is_grouped:
+            for header_row in table_headers:
+                table_data.append(['\n'.join(wrap(header, width=14)) for header in header_row])
         for _, row in df_display.iterrows():
             table_data.append(row.tolist())
-        
+
         # Calculate column widths - make first column wider for Team Member
         col_widths = [0.10] + [0.06] * (len(df_display.columns) - 1)
-        
-        table = ax.table(cellText=table_data, cellLoc='center', loc='center',
-                        colWidths=col_widths)
-        
+        normalized_widths = [width / sum(col_widths) for width in col_widths]
+        table = ax.table(
+            cellText=table_data,
+            cellLoc='center',
+            loc='center' if not is_grouped else 'lower left',
+            colWidths=normalized_widths,
+            bbox=[0, 0, 1, 0.68] if is_grouped else None,
+        )
+
         table.auto_set_font_size(False)
         table.set_fontsize(8)
         table.scale(1, 1.8 if header_rows == 1 else 1.35)
-        
-        # Style header row with text wrapping
-        for row_index in range(header_rows):
-            for column_index in range(len(df_display.columns)):
-                cell = table[(row_index, column_index)]
-                cell.set_facecolor('#4472C4')
-                cell.set_text_props(weight='bold', color='white', ha='center', va='center')
-                cell.set_height(0.06 if header_rows == 1 else 0.045)
 
-        if is_grouped:
-            for column_index in range(1, len(df_display.columns)):
-                table[(0, column_index)].visible_edges = 'BT'
-                table[(1, column_index)].visible_edges = 'BT'
-            table[(1, 0)].visible_edges = 'LRT'
-            table[(2, 0)].visible_edges = 'LRB'
-        
         # Style data rows with alternating colors
-        for i in range(header_rows, len(table_data)):
+        first_data_row = 0 if is_grouped else header_rows
+        for i in range(first_data_row, len(table_data)):
             for j in range(len(df_display.columns)):
                 cell = table[(i, j)]
                 if j == 0:
@@ -675,9 +681,54 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
                 else:
                     cell.set_facecolor('#E2F0D9')
                 cell.set_text_props(ha='center', va='center')
-        
-        # Add title
-        plt.title(title, fontsize=14, fontweight='bold', pad=20)
+
+        if is_grouped:
+            header_color = '#4472C4'
+            edge_color = '#D9E2F3'
+            boundaries = [0]
+            for width in normalized_widths:
+                boundaries.append(boundaries[-1] + width)
+
+            def add_header_cell(x, y, width, height, label):
+                ax.add_patch(Rectangle(
+                    (x, y), width, height,
+                    transform=ax.transAxes,
+                    facecolor=header_color,
+                    edgecolor=edge_color,
+                    linewidth=0.8,
+                ))
+                ax.text(
+                    x + width / 2,
+                    y + height / 2,
+                    '\n'.join(wrap(label, width=14)),
+                    transform=ax.transAxes,
+                    ha='center',
+                    va='center',
+                    color='white',
+                    fontweight='bold',
+                    fontsize=8,
+                )
+
+            add_header_cell(0, 0.92, 1, 0.06, table_headers[0][0])
+            add_header_cell(0, 0.76, normalized_widths[0], 0.16, 'Team Member')
+            for group, start, span in group_spans:
+                add_header_cell(
+                    boundaries[start],
+                    0.84,
+                    boundaries[start + span] - boundaries[start],
+                    0.08,
+                    group,
+                )
+            for column_index, column in enumerate(ordered_columns[1:], start=1):
+                add_header_cell(boundaries[column_index], 0.76, normalized_widths[column_index], 0.08, str(column[2]))
+        else:
+            for row_index in range(header_rows):
+                for column_index in range(len(df_display.columns)):
+                    cell = table[(row_index, column_index)]
+                    cell.set_facecolor('#4472C4')
+                    cell.set_text_props(weight='bold', color='white', ha='center', va='center')
+                    cell.set_height(0.06 if header_rows == 1 else 0.045)
+            plt.title(title, fontsize=14, fontweight='bold', pad=20)
         
         # Save to file
         plt.savefig(output_path, bbox_inches='tight', dpi=100, facecolor='white')
