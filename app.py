@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+from html import escape
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -129,17 +130,179 @@ def flatten_weekly_overview_columns(df):
     if df.empty:
         return df.copy()
 
-    renamed = {}
+    flattened_columns = []
     for column in df.columns:
         if isinstance(column, tuple):
             label = " / ".join(str(part).strip() for part in column if str(part).strip())
             if column == ('Summary', '', 'Team Member'):
                 label = 'Team Member'
-            renamed[column] = label
+            flattened_columns.append(label)
         else:
-            renamed[column] = str(column)
+            flattened_columns.append(str(column))
 
-    return df.rename(columns=renamed)
+    flattened = df.copy()
+    flattened.columns = flattened_columns
+    return flattened
+
+
+def order_weekly_overview_columns(df, round_label):
+    if df.empty:
+        return df
+
+    columns = list(df.columns)
+    ordered = [column for column in ["Team Member"] if column in columns]
+
+    if round_label:
+        round_labels = [round_label]
+    else:
+        round_labels = sorted(
+            {
+                column.split(" / ")[0]
+                for column in columns
+                if column.startswith("Round ")
+            },
+            key=lambda label: int(label.split()[1]),
+        )
+
+    for current_round_label in round_labels:
+        subtotal_columns = [
+            f"{current_round_label} / Subtotal / Round Points",
+            f"{current_round_label} / Subtotal / Round Rank",
+            f"{current_round_label} / Subtotal / Round Tokens",
+            f"{current_round_label} / Subtotal / Round Subtotal",
+        ]
+        gameweek_columns = [
+            column for column in columns
+            if column.startswith(f"{current_round_label} / GW ")
+        ]
+        gameweek_columns.sort(
+            key=lambda column: (
+                int(column.split(" / ")[1].split()[1]),
+                {"Pts": 0, "Rank": 1, "Token": 2}.get(column.split(" / ")[-1], 3),
+            )
+        )
+        ordered.extend(column for column in subtotal_columns if column in columns)
+        ordered.extend(gameweek_columns)
+
+    ordered.extend(
+        column for column in [
+            "Summary / Total Scores",
+            "Summary / Total Prison Tokens",
+        ]
+        if column in columns
+    )
+    ordered.extend(column for column in columns if column not in ordered)
+    return df[ordered]
+
+
+def style_weekly_overview(dataframe):
+    styles = pd.DataFrame("", index=dataframe.index, columns=dataframe.columns)
+    light_yellow = "background-color: #fff2cc;"
+    light_green = "background-color: #e2f0d9;"
+
+    for column in dataframe.columns:
+        if column.endswith((" / Round Points", " / Round Rank", " / Pts", " / Rank", " / Total Scores")):
+            styles[column] = light_yellow
+        elif column.endswith((" / Round Tokens", " / Token", " / Total Prison Tokens")):
+            styles[column] = light_green
+
+        if column.endswith(" / Round Subtotal"):
+            styles[column] = light_green + "font-weight: bold;"
+
+    return styles
+
+
+def weekly_overview_column_config(dataframe):
+    config = {
+        "Team Member": st.column_config.TextColumn("Team Member", pinned=True),
+    }
+    for column in dataframe.columns:
+        if column.endswith((" / Round Points", " / Round Rank", " / Pts", " / Rank", " / Total Scores")):
+            config[column] = st.column_config.NumberColumn(column, format="%d")
+        elif column.endswith((" / Round Tokens", " / Round Subtotal", " / Token", " / Total Prison Tokens")):
+            config[column] = st.column_config.NumberColumn(column, format="%.1f")
+    return config
+
+
+def render_weekly_overview_table(dataframe, round_label):
+    """Render one round with explicit grouped HTML table headers."""
+    if dataframe.empty:
+        return
+
+    columns = list(dataframe.columns)
+    team_member_column = ('Summary', '', 'Team Member')
+    summary_columns = [
+        ('Summary', '', 'Total Scores'),
+        ('Summary', '', 'Total Prison Tokens'),
+    ]
+    round_columns = [column for column in columns if column[0] == round_label]
+    ordered_columns = [team_member_column]
+    ordered_columns.extend(column for column in round_columns if column[1] == 'Subtotal')
+    ordered_columns.extend(column for column in round_columns if column[1] != 'Subtotal')
+    ordered_columns.extend(column for column in summary_columns if column in columns)
+
+    display_groups = {
+        column: (
+            f'{round_label} / {column[1].replace(" ", "")}'
+            if column[1].startswith('GW ')
+            else column[1] or 'Summary'
+        )
+        for column in ordered_columns[1:]
+    }
+    group_columns = []
+    for column in ordered_columns[1:]:
+        group = display_groups[column]
+        if not group_columns or group_columns[-1][0] != group:
+            group_columns.append([group, 0])
+        group_columns[-1][1] += 1
+
+    html = [
+        '<div class="weekly-overview-table-wrapper"><table class="weekly-overview-table">',
+        '<thead>',
+        f'<tr><th colspan="{len(ordered_columns)}">{escape(round_label)}</th></tr>',
+        '<tr><th rowspan="2" class="team-member-header">Team Member</th>',
+    ]
+    for group, span in group_columns:
+        html.append(f'<th colspan="{span}">{escape(group)}</th>')
+    html.append('</tr><tr>')
+    for column in ordered_columns[1:]:
+        html.append(f'<th>{escape(column[2])}</th>')
+    html.append('</tr></thead><tbody>')
+
+    group_index = {group: index for index, (group, _) in enumerate(group_columns)}
+    for _, row in dataframe.iterrows():
+        html.append('<tr>')
+        for column_index, column in enumerate(ordered_columns):
+            value = row[column]
+            if pd.isna(value):
+                value = ''
+            classes = ['team-member-cell'] if column_index == 0 else []
+            if column_index > 0:
+                classes.append(f'group-{group_index[display_groups[column]] % 2}')
+            if column[2] in ('Round Subtotal', 'Total Prison Tokens'):
+                classes.append('emphasis-cell')
+            class_attribute = f' class="{" ".join(classes)}"' if classes else ''
+            html.append(f'<td{class_attribute}>{escape(str(value))}</td>')
+        html.append('</tr>')
+    html.append(
+        '</tbody></table></div>'
+        '<style>'
+        '.weekly-overview-table-wrapper { overflow-x: auto; }'
+        '.weekly-overview-table { border-collapse: collapse; width: 100%; min-width: 900px; }'
+        '.weekly-overview-table th, .weekly-overview-table td { '
+        'border: 1px solid #d9d9d9; padding: 0.35rem 0.55rem; text-align: right; white-space: nowrap; }'
+        '.weekly-overview-table thead th { background: #1f4e78; color: white; font-weight: 700; text-align: center; }'
+        '.weekly-overview-table thead tr:first-child th { font-size: 1.05rem; }'
+        '.weekly-overview-table .team-member-header { position: sticky; left: 0; '
+        'text-align: left; background: #1f4e78; color: white; z-index: 2; }'
+        '.weekly-overview-table .team-member-cell { position: sticky; left: 0; '
+        'text-align: left; background: #f2f2f2; z-index: 1; }'
+        '.weekly-overview-table .group-0 { background: #fff2cc; }'
+        '.weekly-overview-table .group-1 { background: #e2f0d9; }'
+        '.weekly-overview-table .emphasis-cell { font-weight: 700; }'
+        '</style>'
+    )
+    st.html(''.join(html))
 
 
 @st.cache_data(ttl=300)
@@ -309,15 +472,19 @@ else:
             ]
             display_df = weekly_overview_df[display_cols]
 
-        display_df = flatten_weekly_overview_columns(display_df)
-        st.dataframe(
-            display_df,
-            width="stretch",
-            hide_index=True,
-            column_config={
-                'Team Member': st.column_config.TextColumn('Team Member', pinned=True),
-            },
-        )
+        if selected_round == 0:
+            export_df = weekly_overview_df
+            display_df = flatten_weekly_overview_columns(display_df)
+            display_df = order_weekly_overview_columns(display_df, None)
+            st.dataframe(
+                display_df.style.apply(style_weekly_overview, axis=None),
+                width="stretch",
+                hide_index=True,
+                column_config=weekly_overview_column_config(display_df),
+            )
+        else:
+            export_df = display_df
+            render_weekly_overview_table(display_df, selected_round_label)
         
         # Add export button for weekly overview
         col1, col2 = st.columns([1, 3])
@@ -328,7 +495,7 @@ else:
                     with tempfile.TemporaryDirectory() as tmpdir:
                         output_path = os.path.join(tmpdir, "weekly_overview.png")
                         generated_path = dataframe_to_jpeg(
-                            display_df, 
+                            export_df,
                             output_path, 
                             title=f"Weekly Overview - Round {selected_round if selected_round != 0 else 'All'}"
                         )

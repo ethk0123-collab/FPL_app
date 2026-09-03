@@ -586,67 +586,39 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
     """
     import matplotlib.pyplot as plt
     from textwrap import wrap
-    import re
     
     try:
-        # Work with original MultiIndex structure to reorder columns
         df_display = df.copy()
-        column_order = []
-        
-        # 1. Add Summary / Team Member
-        if ('Summary', 'Team Member') in df_display.columns:
-            column_order.append(('Summary', 'Team Member'))
-        
-        # 2. Add Round 1 summary columns in order
-        for col_name in ['Round Points', 'Round Rank', 'Round Tokens', 'Round Subtotal']:
-            if ('Round 1', col_name) in df_display.columns:
-                column_order.append(('Round 1', col_name))
-        
-        # 3. Extract and sort GW columns by gameweek number and type (Pts, Rank, Token)
-        gw_columns = {}  # {gw_number: [columns]}
-        
-        for col_tuple in df_display.columns:
-            if isinstance(col_tuple, tuple) and len(col_tuple) >= 2:
-                level0 = str(col_tuple[0]).strip()
-                level1 = str(col_tuple[1]).strip()
-                
-                # Look for GW columns
-                if level0.startswith('Round') and 'GW' in level1:
-                    # Extract GW number from level1 like "GW1Pts"
-                    match = re.search(r'GW(\d+)', level1)
-                    if match:
-                        gw_num = int(match.group(1))
-                        if gw_num not in gw_columns:
-                            gw_columns[gw_num] = []
-                        gw_columns[gw_num].append(col_tuple)
-        
-        # Sort columns within each GW: Pts, Rank, Token order
-        type_order = {'Pts': 0, 'Rank': 1, 'Token': 2}
-        for gw_num in sorted(gw_columns.keys()):
-            cols = gw_columns[gw_num]
-            def get_type_priority(col_tuple):
-                level1 = str(col_tuple[1]).strip()
-                # Extract type (Pts, Rank, or Token) from the second level
-                for type_str, priority in type_order.items():
-                    if type_str in level1:
-                        return priority
-                return 3
-            
-            sorted_cols = sorted(cols, key=get_type_priority)
-            column_order.extend(sorted_cols)
-        
-        # Add any remaining columns not yet added
-        for col in df_display.columns:
-            if col not in column_order:
-                column_order.append(col)
-        
-        # Reorder the dataframe
-        df_display = df_display[column_order]
-        
-        # Flatten column names for display
-        if isinstance(df_display.columns, pd.MultiIndex):
-            df_display.columns = [" / ".join(str(part).strip() for part in col if str(part).strip()) 
-                                   for col in df_display.columns]
+        is_grouped = isinstance(df_display.columns, pd.MultiIndex) and df_display.columns.nlevels == 3
+        if is_grouped:
+            columns = list(df_display.columns)
+            team_member = ('Summary', '', 'Team Member')
+            ordered_columns = [team_member] if team_member in columns else []
+            for round_name in dict.fromkeys(column[0] for column in columns if column[0] != 'Summary'):
+                round_columns = [column for column in columns if column[0] == round_name]
+                ordered_columns.extend(column for column in round_columns if column[1] == 'Subtotal')
+                ordered_columns.extend(column for column in round_columns if column[1].startswith('GW '))
+            ordered_columns.extend(column for column in columns if column[0] == 'Summary' and column not in ordered_columns)
+            ordered_columns.extend(column for column in columns if column not in ordered_columns)
+            df_display = df_display[ordered_columns]
+            table_headers = [
+                ["" for _ in ordered_columns],
+                ["" for _ in ordered_columns],
+                [str(column[2]) for column in ordered_columns],
+            ]
+            if ordered_columns:
+                table_headers[0][0] = "Round 1"
+                table_headers[1][0] = "Team Member"
+            for index, column in enumerate(ordered_columns[1:], start=1):
+                table_headers[1][index] = (
+                    f'{column[0]} / {column[1].replace(" ", "")}'
+                    if column[1].startswith('GW ')
+                    else column[1] or 'Summary'
+                )
+            if ordered_columns:
+                table_headers[1][-1] = table_headers[1][-1] or 'Summary'
+        else:
+            table_headers = [[str(column) for column in df_display.columns]]
         
         # Ensure the output path ends with .png
         if not output_path.endswith('.png'):
@@ -654,23 +626,15 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
             if not output_path.endswith('.png'):
                 output_path = output_path + '.png'
         
-        # Create figure and axis with more space for wrapped headers
+        # Create figure and axis with more space for the grouped headers.
+        header_rows = len(table_headers)
         fig, ax = plt.subplots(figsize=(20, max(10, len(df_display) * 0.45)))
         ax.axis('tight')
         ax.axis('off')
         
-        # Create table with wrapped headers
         table_data = []
-        headers = df_display.columns.tolist()
-        
-        # Wrap header text
-        wrapped_headers = []
-        for header in headers:
-            # Wrap text to max 15 chars per line for headers
-            wrapped = '\n'.join(wrap(str(header), width=12))
-            wrapped_headers.append(wrapped)
-        
-        table_data.append(wrapped_headers)
+        for header_row in table_headers:
+            table_data.append(['\n'.join(wrap(header, width=14)) for header in header_row])
         
         for _, row in df_display.iterrows():
             table_data.append(row.tolist())
@@ -683,23 +647,33 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
         
         table.auto_set_font_size(False)
         table.set_fontsize(8)
-        table.scale(1, 2.2)  # Increase row height for wrapped headers
+        table.scale(1, 1.8 if header_rows == 1 else 1.35)
         
         # Style header row with text wrapping
-        for i in range(len(df_display.columns)):
-            cell = table[(0, i)]
-            cell.set_facecolor('#4472C4')
-            cell.set_text_props(weight='bold', color='white', ha='center', va='center')
-            cell.set_height(0.08)  # Increase header cell height
+        for row_index in range(header_rows):
+            for column_index in range(len(df_display.columns)):
+                cell = table[(row_index, column_index)]
+                cell.set_facecolor('#4472C4')
+                cell.set_text_props(weight='bold', color='white', ha='center', va='center')
+                cell.set_height(0.06 if header_rows == 1 else 0.045)
+
+        if is_grouped:
+            for column_index in range(1, len(df_display.columns)):
+                table[(0, column_index)].visible_edges = 'BT'
+                table[(1, column_index)].visible_edges = 'BT'
+            table[(1, 0)].visible_edges = 'LRT'
+            table[(2, 0)].visible_edges = 'LRB'
         
         # Style data rows with alternating colors
-        for i in range(1, len(table_data)):
+        for i in range(header_rows, len(table_data)):
             for j in range(len(df_display.columns)):
                 cell = table[(i, j)]
-                if i % 2 == 0:
-                    cell.set_facecolor('#E7E6E6')
-                else:
+                if j == 0:
                     cell.set_facecolor('#F2F2F2')
+                elif (j - 1) % 2 == 0:
+                    cell.set_facecolor('#FFF2CC')
+                else:
+                    cell.set_facecolor('#E2F0D9')
                 cell.set_text_props(ha='center', va='center')
         
         # Add title
