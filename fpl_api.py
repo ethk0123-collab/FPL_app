@@ -642,7 +642,7 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
         
         # Create figure and axis with more space for the grouped headers.
         header_rows = len(table_headers)
-        figure_height = max(3.2, len(df_display) * 0.38 + (1.5 if is_grouped else 1.0))
+        figure_height = max(3.2, len(df_display) * 0.38 + (1.8 if is_grouped else 1.0))
         fig, ax = plt.subplots(figsize=(20, figure_height))
         ax.axis('tight')
         ax.axis('off')
@@ -680,7 +680,8 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
                     cell.set_facecolor('#FFF2CC')
                 else:
                     cell.set_facecolor('#E2F0D9')
-                cell.set_text_props(ha='center', va='center')
+                is_round_subtotal = is_grouped and df_display.columns[j][2] == 'Round Subtotal'
+                cell.set_text_props(ha='center', va='center', weight='bold' if is_round_subtotal else 'normal')
 
         if is_grouped:
             header_color = '#4472C4'
@@ -700,13 +701,13 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
                 ax.text(
                     x + width / 2,
                     y + height / 2,
-                    '\n'.join(wrap(label, width=14)),
+                    '\n'.join(wrap(label, width=10)),
                     transform=ax.transAxes,
                     ha='center',
                     va='center',
                     color='white',
                     fontweight='bold',
-                    fontsize=8,
+                    fontsize=7,
                 )
 
             add_header_cell(0, 0.92, 1, 0.06, table_headers[0][0])
@@ -720,7 +721,7 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
                     group,
                 )
             for column_index, column in enumerate(ordered_columns[1:], start=1):
-                add_header_cell(boundaries[column_index], 0.76, normalized_widths[column_index], 0.08, str(column[2]))
+                add_header_cell(boundaries[column_index], 0.72, normalized_widths[column_index], 0.12, str(column[2]))
         else:
             for row_index in range(header_rows):
                 for column_index in range(len(df_display.columns)):
