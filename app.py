@@ -11,12 +11,13 @@ from fpl_api import (
     PRISON_LEAGUE_ID,
     calculate_weekly_prison_tokens,
     get_global_top_player_selections,
+    get_global_top_player_weekly_points,
     get_latest_gameweek,
     get_league_data,
     get_league_name,
     get_league_title,
-    get_global_top_player_selections,
     get_summary_columns,
+    get_team_fixture_difficulty_matrix,
     get_weekly_overview,
     dataframe_to_jpeg,
     custom_rank,
@@ -28,6 +29,40 @@ st.set_page_config(page_title="FPL League Dashboard", layout="wide")
 @st.cache_data(ttl=300)
 def load_global_top_player_selections(gameweek):
     return get_global_top_player_selections(gameweek)
+
+
+@st.cache_data(ttl=300)
+def load_global_top_player_weekly_points(gameweek):
+    return get_global_top_player_weekly_points(gameweek)
+
+
+@st.cache_data(ttl=3600)
+def load_team_fixture_difficulty_matrix():
+    return get_team_fixture_difficulty_matrix()
+
+
+FDR_COLORS = {
+    1: ('#375523', '#ffffff'),
+    2: ('#01fc7a', '#000000'),
+    3: ('#e7e7e7', '#000000'),
+    4: ('#ff1751', '#ffffff'),
+    5: ('#80072d', '#ffffff'),
+}
+
+
+def style_fixture_difficulty_matrix(display_df, difficulty_df):
+    def apply_colors(_):
+        styles = pd.DataFrame('', index=display_df.index, columns=display_df.columns)
+        for col in display_df.columns:
+            if col == 'Club':
+                continue
+            for idx in display_df.index:
+                difficulty = difficulty_df.at[idx, col]
+                bg_color, text_color = FDR_COLORS.get(int(difficulty), ('#ffffff', '#000000'))
+                styles.at[idx, col] = f'background-color: {bg_color}; color: {text_color}'
+        return styles
+
+    return display_df.style.apply(apply_colors, axis=None)
 
 
 if "page" not in st.session_state:
@@ -67,6 +102,32 @@ if st.session_state.page == "top_players":
                 "No. of Selections",
                 format="%d",
             ),
+        },
+    )
+
+    st.subheader("Fixture Difficulty Matrix")
+    with st.spinner("Fetching fixture difficulty..."):
+        fixture_display_df, fixture_difficulty_df = load_team_fixture_difficulty_matrix()
+
+    st.dataframe(
+        style_fixture_difficulty_matrix(fixture_display_df, fixture_difficulty_df),
+        width="stretch",
+        hide_index=True,
+        column_config={"Club": st.column_config.TextColumn("Club", pinned=True)},
+    )
+
+    st.subheader("Weekly Points Matrix")
+    with st.spinner("Fetching weekly points..."):
+        weekly_points_df = load_global_top_player_weekly_points(latest_gameweek)
+
+    st.dataframe(
+        weekly_points_df,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Player Name": st.column_config.TextColumn("Player Name", pinned=True),
+            "Club": st.column_config.TextColumn("Club"),
+            "Position": st.column_config.TextColumn("Position"),
         },
     )
     st.stop()

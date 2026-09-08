@@ -63,7 +63,7 @@ def build_player_selection_summary(picks_by_manager, players_map, teams_map, pos
     ).reset_index(drop=True)
 
 
-def get_global_top_player_selections(gameweek: int, manager_limit: int = 100):
+def fetch_top_manager_picks(gameweek: int, manager_limit: int = 100):
     headers = {'User-Agent': 'Mozilla/5.0'}
     session = requests.Session()
 
@@ -102,11 +102,64 @@ def get_global_top_player_selections(gameweek: int, manager_limit: int = 100):
             break
         page += 1
 
+    return picks_by_manager, players_map, teams_map, positions_map, session, headers
+
+
+def get_global_top_player_selections(gameweek: int, manager_limit: int = 100):
+    picks_by_manager, players_map, teams_map, positions_map, _, _ = fetch_top_manager_picks(
+        gameweek, manager_limit
+    )
     return build_player_selection_summary(
         picks_by_manager,
         players_map,
         teams_map,
         positions_map,
+    )
+
+
+def build_player_weekly_points_matrix(player_ids, players_map, teams_map, positions_map, session, headers, total_gameweeks=38):
+    columns = ['Player Name', 'Club', 'Position'] + [f'GW{gw}' for gw in range(1, total_gameweeks + 1)]
+    rows = []
+    for player_id in player_ids:
+        player = players_map.get(player_id)
+        if not player:
+            continue
+
+        points_by_week = {}
+        try:
+            summary_url = f"https://fantasy.premierleague.com/api/element-summary/{player_id}/"
+            summary = session.get(summary_url, headers=headers, timeout=10).json()
+            for gw_entry in summary.get('history', []):
+                round_no = gw_entry.get('round')
+                if round_no is not None:
+                    points_by_week[int(round_no)] = gw_entry.get('total_points', 0)
+        except requests.RequestException:
+            pass
+
+        row = {
+            'Player Name': player.get('web_name', ''),
+            'Club': teams_map.get(player.get('team'), ''),
+            'Position': positions_map.get(player.get('element_type'), ''),
+        }
+        for gw in range(1, total_gameweeks + 1):
+            row[f'GW{gw}'] = points_by_week.get(gw, 0)
+        rows.append(row)
+
+    return pd.DataFrame(rows, columns=columns)
+
+
+def get_global_top_player_weekly_points(gameweek: int, manager_limit: int = 100, total_gameweeks: int = 38):
+    picks_by_manager, players_map, teams_map, positions_map, session, headers = fetch_top_manager_picks(
+        gameweek, manager_limit
+    )
+    player_ids = sorted({
+        pick.get('element')
+        for picks in picks_by_manager
+        for pick in picks
+        if pick.get('element') is not None
+    })
+    return build_player_weekly_points_matrix(
+        player_ids, players_map, teams_map, positions_map, session, headers, total_gameweeks
     )
 
 
@@ -185,50 +238,57 @@ def calculate_live_team_points(picks, live_points):
     return total
 
 
-def build_player_selection_summary(picks, players, teams, positions):
-    selection_counts = {}
-
-    for manager_picks in picks or []:
-        for pick in manager_picks or []:
-            element_id = pick.get('element')
-            if element_id is None:
-                continue
-
-            player = players.get(element_id, {})
-            player_name = player.get('web_name') or f"Player {element_id}"
-            club_name = teams.get(player.get('team'), '')
-            position_name = positions.get(player.get('element_type'), '')
-
-            key = (player_name, club_name, position_name)
-            if key not in selection_counts:
-                selection_counts[key] = {
-                    'Player Name': player_name,
-                    'Club': club_name,
-                    'Position': position_name,
-                    'No. of Selections': 0,
-                }
-            selection_counts[key]['No. of Selections'] += 1
-
-    df = pd.DataFrame(list(selection_counts.values()))
-    if df.empty:
-        return pd.DataFrame(columns=['Player Name', 'Club', 'Position', 'No. of Selections'])
-
-    return df.sort_values(['No. of Selections', 'Player Name'], ascending=[False, True]).reset_index(drop=True)
-
-
-def get_global_top_player_selections(gameweek: int):
+def get_team_fixture_difficulty_matrix(total_gameweeks: int = 38):
+    """Build a Club x Gameweek fixture difficulty matrix using the FPL fixtures API."""
     headers = {'User-Agent': 'Mozilla/5.0'}
-    bootstrap_url = 'https://fantasy.premierleague.com/api/bootstrap-static/'
+    empty_columns = ['Club'] + [f'GW{gw}' for gw in range(1, total_gameweeks + 1)]
     try:
-        bootstrap = requests.get(bootstrap_url, headers=headers, timeout=10).json()
+        bootstrap = requests.get(
+            'https://fantasy.premierleague.com/api/bootstrap-static/', headers=headers, timeout=10
+        ).json()
+        fixtures = requests.get(
+            'https://fantasy.premierleague.com/api/fixtures/', headers=headers, timeout=10
+        ).json()
     except requests.RequestException:
-        return pd.DataFrame(columns=['Player Name', 'Club', 'Position', 'No. of Selections'])
+        empty_df = pd.DataFrame(columns=empty_columns)
+        return empty_df, empty_df.copy()
 
-    players = {player['id']: player for player in bootstrap.get('elements', [])}
-    teams = {team['id']: team['name'] for team in bootstrap.get('teams', [])}
-    positions = {pos['id']: pos['singular_name_short'] for pos in bootstrap.get('element_types', [])}
+    teams = {team['id']: team for team in bootstrap.get('teams', [])}
+    team_ids = sorted(teams.keys(), key=lambda tid: teams[tid]['name'])
 
-    return build_player_selection_summary([], players, teams, positions)
+    opponents_by_team = {tid: {} for tid in team_ids}
+    difficulty_by_team = {tid: {} for tid in team_ids}
+
+    for fixture in fixtures:
+        event = fixture.get('event')
+        home_id = fixture.get('team_h')
+        away_id = fixture.get('team_a')
+        if event is None or home_id not in teams or away_id not in teams:
+            continue
+
+        home_short = teams[away_id]['short_name']
+        away_short = teams[home_id]['short_name']
+
+        opponents_by_team[home_id].setdefault(event, []).append(f"{home_short} (H)")
+        difficulty_by_team[home_id].setdefault(event, []).append(fixture.get('team_h_difficulty', 0))
+
+        opponents_by_team[away_id].setdefault(event, []).append(f"{away_short} (A)")
+        difficulty_by_team[away_id].setdefault(event, []).append(fixture.get('team_a_difficulty', 0))
+
+    display_rows = []
+    difficulty_rows = []
+    for tid in team_ids:
+        display_row = {'Club': teams[tid]['name']}
+        difficulty_row = {'Club': teams[tid]['name']}
+        for gw in range(1, total_gameweeks + 1):
+            opponents = opponents_by_team[tid].get(gw, [])
+            difficulties = difficulty_by_team[tid].get(gw, [])
+            display_row[f'GW{gw}'] = ' / '.join(opponents) if opponents else '-'
+            difficulty_row[f'GW{gw}'] = max(difficulties) if difficulties else 0
+        display_rows.append(display_row)
+        difficulty_rows.append(difficulty_row)
+
+    return pd.DataFrame(display_rows, columns=empty_columns), pd.DataFrame(difficulty_rows, columns=empty_columns)
 
 
 def get_gameweek_data_status(events, gameweek: int):
