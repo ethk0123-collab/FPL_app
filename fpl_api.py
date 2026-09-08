@@ -402,21 +402,13 @@ def get_weekly_overview(league_id: int):
                     if week <= latest_confirmed_week or week == current_live_week
                 )
             round_rank_series = pd.Series(round_points_by_manager, dtype='float64')
-            round_rank = custom_rank(round_rank_series).get(manager_name, 0)
+            round_ranking = custom_rank(round_rank_series)
+            round_rank = round_ranking.get(manager_name, 0)
 
-            round_token_pool_values = {}
-            for _, other_name in managers:
-                round_token_pool_values[other_name] = sum(
-                    weekly_tokens[other_name][week - 1]
-                    for week in round_weeks
-                    if week <= latest_confirmed_week or week == current_live_week
-                )
-            round_token_series = pd.Series(round_token_pool_values, dtype='float64')
-            round_token_rank = custom_rank(round_token_series)
-            round_contributions = -round_token_rank.map({4: 50, 5: 50, 6: 100, 7: 100}).fillna(0)
+            round_contributions = -round_ranking.map({4: 50, 5: 50, 6: 100, 7: 100}).fillna(0)
             round_pool = -round_contributions.sum()
-            round_first = round_token_rank == 1
-            round_second = round_token_rank == 2
+            round_first = round_ranking == 1
+            round_second = round_ranking == 2
             if round_first.any():
                 round_contributions.loc[round_first] = round_pool * 0.7 / round_first.sum()
             if round_second.any():
