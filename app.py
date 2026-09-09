@@ -10,6 +10,7 @@ import pandas as pd
 from fpl_api import (
     PRISON_LEAGUE_ID,
     calculate_weekly_prison_tokens,
+    get_global_top_player_minutes_played,
     get_global_top_player_selections,
     get_global_top_player_weekly_points,
     get_latest_gameweek,
@@ -34,6 +35,11 @@ def load_global_top_player_selections(gameweek):
 @st.cache_data(ttl=300)
 def load_global_top_player_weekly_points(gameweek):
     return get_global_top_player_weekly_points(gameweek)
+
+
+@st.cache_data(ttl=300)
+def load_global_top_player_minutes_played(gameweek):
+    return get_global_top_player_minutes_played(gameweek)
 
 
 @st.cache_data(ttl=3600)
@@ -63,6 +69,20 @@ def style_fixture_difficulty_matrix(display_df, difficulty_df):
         return styles
 
     return display_df.style.apply(apply_colors, axis=None)
+
+
+def style_weekly_points_matrix(display_df):
+    gw_columns = [col for col in display_df.columns if col.startswith('GW')]
+
+    def highlight_high_scores(_):
+        styles = pd.DataFrame('', index=display_df.index, columns=display_df.columns)
+        for col in gw_columns:
+            styles[col] = display_df[col].apply(
+                lambda value: 'background-color: #01fc7a' if pd.notna(value) and value > 10 else ''
+            )
+        return styles
+
+    return display_df.style.apply(highlight_high_scores, axis=None)
 
 
 if "page" not in st.session_state:
@@ -116,20 +136,115 @@ if st.session_state.page == "top_players":
         column_config={"Club": st.column_config.TextColumn("Club", pinned=True)},
     )
 
+    if "linked_selected_player" not in st.session_state:
+        st.session_state.linked_selected_player = None
+        st.session_state.linked_selected_source = None
+
+    if st.session_state.linked_selected_player:
+        st.caption(f"Filtering both matrices to player: **{st.session_state.linked_selected_player}**")
+        if st.button("Clear player selection"):
+            st.session_state.linked_selected_player = None
+            st.session_state.linked_selected_source = None
+            st.rerun()
+
     st.subheader("Weekly Points Matrix")
     with st.spinner("Fetching weekly points..."):
         weekly_points_df = load_global_top_player_weekly_points(latest_gameweek)
 
-    st.dataframe(
-        weekly_points_df,
+    position_options = sorted(weekly_points_df["Position"].dropna().unique().tolist())
+    selected_positions = st.pills(
+        "Position",
+        position_options,
+        selection_mode="multi",
+        default=position_options,
+    )
+
+    club_options = ["All"] + sorted(weekly_points_df["Club"].dropna().unique().tolist())
+    selected_club = st.selectbox("Club", club_options)
+
+    filtered_weekly_points_df = weekly_points_df[weekly_points_df["Position"].isin(selected_positions)]
+    if selected_club != "All":
+        filtered_weekly_points_df = filtered_weekly_points_df[filtered_weekly_points_df["Club"] == selected_club]
+
+    if st.session_state.linked_selected_player and st.session_state.linked_selected_source == "minutes":
+        filtered_weekly_points_df = filtered_weekly_points_df[
+            filtered_weekly_points_df["Player Name"] == st.session_state.linked_selected_player
+        ]
+
+    filtered_weekly_points_df = filtered_weekly_points_df.sort_values("Average Points", ascending=False)
+
+    weekly_points_event = st.dataframe(
+        style_weekly_points_matrix(filtered_weekly_points_df),
         width="stretch",
         hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="weekly_points_table",
         column_config={
             "Player Name": st.column_config.TextColumn("Player Name", pinned=True),
             "Club": st.column_config.TextColumn("Club"),
             "Position": st.column_config.TextColumn("Position"),
+            "Total Points": st.column_config.NumberColumn("Total Points", format="%d"),
+            "Average Points": st.column_config.NumberColumn("Average Points", format="%.2f"),
         },
     )
+    weekly_selected_rows = weekly_points_event.selection.rows if weekly_points_event else []
+    if weekly_selected_rows:
+        st.session_state.linked_selected_player = filtered_weekly_points_df.iloc[weekly_selected_rows[0]]["Player Name"]
+        st.session_state.linked_selected_source = "weekly"
+    elif st.session_state.linked_selected_source == "weekly":
+        st.session_state.linked_selected_player = None
+        st.session_state.linked_selected_source = None
+
+    st.subheader("Minutes Played Overview")
+    with st.spinner("Fetching minutes played..."):
+        minutes_played_df = load_global_top_player_minutes_played(latest_gameweek)
+
+    minutes_position_options = sorted(minutes_played_df["Position"].dropna().unique().tolist())
+    selected_minutes_positions = st.pills(
+        "Position",
+        minutes_position_options,
+        selection_mode="multi",
+        default=minutes_position_options,
+        key="minutes_position_filter",
+    )
+
+    minutes_club_options = ["All"] + sorted(minutes_played_df["Club"].dropna().unique().tolist())
+    selected_minutes_club = st.selectbox("Club", minutes_club_options, key="minutes_club_filter")
+
+    filtered_minutes_played_df = minutes_played_df[minutes_played_df["Position"].isin(selected_minutes_positions)]
+    if selected_minutes_club != "All":
+        filtered_minutes_played_df = filtered_minutes_played_df[filtered_minutes_played_df["Club"] == selected_minutes_club]
+
+    if st.session_state.linked_selected_player and st.session_state.linked_selected_source == "weekly":
+        filtered_minutes_played_df = filtered_minutes_played_df[
+            filtered_minutes_played_df["Player Name"] == st.session_state.linked_selected_player
+        ]
+
+    filtered_minutes_played_df = filtered_minutes_played_df.sort_values("Total Minutes", ascending=False)
+
+    minutes_played_event = st.dataframe(
+        filtered_minutes_played_df,
+        width="stretch",
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="minutes_played_table",
+        column_config={
+            "Player Name": st.column_config.TextColumn("Player Name", pinned=True),
+            "Club": st.column_config.TextColumn("Club"),
+            "Position": st.column_config.TextColumn("Position"),
+            "Total Minutes": st.column_config.NumberColumn("Total Minutes", format="%d"),
+            "# of Match >0 min": st.column_config.NumberColumn("# of Match >0 min", format="%d"),
+        },
+    )
+    minutes_selected_rows = minutes_played_event.selection.rows if minutes_played_event else []
+    if minutes_selected_rows:
+        st.session_state.linked_selected_player = filtered_minutes_played_df.iloc[minutes_selected_rows[0]]["Player Name"]
+        st.session_state.linked_selected_source = "minutes"
+    elif st.session_state.linked_selected_source == "minutes":
+        st.session_state.linked_selected_player = None
+        st.session_state.linked_selected_source = None
     st.stop()
 
 ROUND_GROUPS = {

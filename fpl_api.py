@@ -63,7 +63,7 @@ def build_player_selection_summary(picks_by_manager, players_map, teams_map, pos
     ).reset_index(drop=True)
 
 
-def fetch_top_manager_picks(gameweek: int, manager_limit: int = 100):
+def fetch_all_players():
     headers = {'User-Agent': 'Mozilla/5.0'}
     session = requests.Session()
 
@@ -75,6 +75,12 @@ def fetch_top_manager_picks(gameweek: int, manager_limit: int = 100):
         position['id']: position['singular_name_short']
         for position in bootstrap.get('element_types', [])
     }
+
+    return players_map, teams_map, positions_map, session, headers
+
+
+def fetch_top_manager_picks(gameweek: int, manager_limit: int = 100):
+    players_map, teams_map, positions_map, session, headers = fetch_all_players()
 
     picks_by_manager = []
     page = 1
@@ -118,7 +124,9 @@ def get_global_top_player_selections(gameweek: int, manager_limit: int = 100):
 
 
 def build_player_weekly_points_matrix(player_ids, players_map, teams_map, positions_map, session, headers, total_gameweeks=38):
-    columns = ['Player Name', 'Club', 'Position'] + [f'GW{gw}' for gw in range(1, total_gameweeks + 1)]
+    columns = ['Player Name', 'Club', 'Position', 'Total Points', 'Average Points'] + [
+        f'GW{gw}' for gw in range(1, total_gameweeks + 1)
+    ]
     rows = []
     for player_id in player_ids:
         player = players_map.get(player_id)
@@ -126,6 +134,7 @@ def build_player_weekly_points_matrix(player_ids, players_map, teams_map, positi
             continue
 
         points_by_week = {}
+        matches_played = 0
         try:
             summary_url = f"https://fantasy.premierleague.com/api/element-summary/{player_id}/"
             summary = session.get(summary_url, headers=headers, timeout=10).json()
@@ -133,13 +142,18 @@ def build_player_weekly_points_matrix(player_ids, players_map, teams_map, positi
                 round_no = gw_entry.get('round')
                 if round_no is not None:
                     points_by_week[int(round_no)] = gw_entry.get('total_points', 0)
+                    if gw_entry.get('minutes', 0) > 0:
+                        matches_played += 1
         except requests.RequestException:
             pass
 
+        total_points = sum(points_by_week.values())
         row = {
             'Player Name': player.get('web_name', ''),
             'Club': teams_map.get(player.get('team'), ''),
             'Position': positions_map.get(player.get('element_type'), ''),
+            'Total Points': total_points,
+            'Average Points': round(total_points / matches_played, 2) if matches_played > 0 else 0,
         }
         for gw in range(1, total_gameweeks + 1):
             row[f'GW{gw}'] = points_by_week.get(gw, 0)
@@ -148,17 +162,54 @@ def build_player_weekly_points_matrix(player_ids, players_map, teams_map, positi
     return pd.DataFrame(rows, columns=columns)
 
 
+
 def get_global_top_player_weekly_points(gameweek: int, manager_limit: int = 100, total_gameweeks: int = 38):
-    picks_by_manager, players_map, teams_map, positions_map, session, headers = fetch_top_manager_picks(
-        gameweek, manager_limit
-    )
-    player_ids = sorted({
-        pick.get('element')
-        for picks in picks_by_manager
-        for pick in picks
-        if pick.get('element') is not None
-    })
+    players_map, teams_map, positions_map, session, headers = fetch_all_players()
+    player_ids = sorted(players_map.keys())
     return build_player_weekly_points_matrix(
+        player_ids, players_map, teams_map, positions_map, session, headers, total_gameweeks
+    )
+
+
+def build_player_minutes_played_matrix(player_ids, players_map, teams_map, positions_map, session, headers, total_gameweeks=38):
+    columns = ['Player Name', 'Club', 'Position', 'Total Minutes', '# of Match >0 min'] + [
+        f'Wk{gw}' for gw in range(1, total_gameweeks + 1)
+    ]
+    rows = []
+    for player_id in player_ids:
+        player = players_map.get(player_id)
+        if not player:
+            continue
+
+        minutes_by_week = {}
+        try:
+            summary_url = f"https://fantasy.premierleague.com/api/element-summary/{player_id}/"
+            summary = session.get(summary_url, headers=headers, timeout=10).json()
+            for gw_entry in summary.get('history', []):
+                round_no = gw_entry.get('round')
+                if round_no is not None:
+                    minutes_by_week[int(round_no)] = gw_entry.get('minutes', 0)
+        except requests.RequestException:
+            pass
+
+        row = {
+            'Player Name': player.get('web_name', ''),
+            'Club': teams_map.get(player.get('team'), ''),
+            'Position': positions_map.get(player.get('element_type'), ''),
+            'Total Minutes': sum(minutes_by_week.values()),
+            '# of Match >0 min': sum(1 for minutes in minutes_by_week.values() if minutes > 0),
+        }
+        for gw in range(1, total_gameweeks + 1):
+            row[f'Wk{gw}'] = minutes_by_week.get(gw, 0)
+        rows.append(row)
+
+    return pd.DataFrame(rows, columns=columns)
+
+
+def get_global_top_player_minutes_played(gameweek: int, manager_limit: int = 100, total_gameweeks: int = 38):
+    players_map, teams_map, positions_map, session, headers = fetch_all_players()
+    player_ids = sorted(players_map.keys())
+    return build_player_minutes_played_matrix(
         player_ids, players_map, teams_map, positions_map, session, headers, total_gameweeks
     )
 
