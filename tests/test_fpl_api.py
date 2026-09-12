@@ -3,9 +3,11 @@ import pandas as pd
 from fpl_api import (
     build_player_selection_summary,
     calculate_live_team_points,
+    calculate_waterfall_settlements,
     get_gameweek_data_status,
     get_league_title,
     get_summary_columns,
+    is_round_settlement_available,
 )
 
 
@@ -72,6 +74,31 @@ def test_calculate_live_team_points_keeps_zero_multiplier_bench_players_at_zero(
     live_points = {165: 9, 426: 23, 301: 0, 525: 2}
 
     assert calculate_live_team_points(picks, live_points) == 41
+
+
+def test_waterfall_settlements_pay_receivers_in_descending_balance_order():
+    subtotals = {
+        'Highest receiver': 100,
+        'Second receiver': 50,
+        'First payer': -120,
+        'Second payer': -30,
+        'Balanced': 0,
+    }
+
+    settlements = calculate_waterfall_settlements(subtotals)
+
+    assert settlements == {
+        'Highest receiver': ('-', '-'),
+        'Second receiver': ('-', '-'),
+        'First payer': ('Highest receiver\nSecond receiver', '70.00\n50.00'),
+        'Second payer': ('Highest receiver', '30.00'),
+        'Balanced': ('-', '-'),
+    }
+
+
+def test_round_settlement_is_available_only_after_its_final_week_is_confirmed():
+    assert not is_round_settlement_available([1, 2, 3, 4], latest_confirmed_week=3)
+    assert is_round_settlement_available([1, 2, 3, 4], latest_confirmed_week=4)
 
 
 def test_round_rank_includes_live_gameweek_for_in_progress_round():

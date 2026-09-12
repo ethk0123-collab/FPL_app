@@ -6,6 +6,48 @@ PRISON_LEAGUE_ID = 185376
 GLOBAL_LEAGUE_ID = 314
 
 
+def calculate_waterfall_settlements(round_subtotals):
+    """Return sequential payment instructions for one round's balances."""
+    ordered_balances = sorted(round_subtotals.items(), key=lambda item: item[1], reverse=True)
+    remaining_receivers = [
+        [manager_name, round(float(balance), 2)]
+        for manager_name, balance in ordered_balances
+        if balance > 0
+    ]
+    settlements = {manager_name: ("-", "-") for manager_name in round_subtotals}
+    receiver_index = 0
+
+    for manager_name, balance in ordered_balances:
+        if balance >= 0:
+            continue
+
+        remaining_debt = round(-float(balance), 2)
+        payees = []
+        amounts = []
+        while remaining_debt > 0 and receiver_index < len(remaining_receivers):
+            receiver_name, receiver_balance = remaining_receivers[receiver_index]
+            payment = round(min(remaining_debt, receiver_balance), 2)
+            if payment > 0:
+                payees.append(receiver_name)
+                amounts.append(payment)
+                remaining_debt = round(remaining_debt - payment, 2)
+                remaining_receivers[receiver_index][1] = round(receiver_balance - payment, 2)
+
+            if remaining_receivers[receiver_index][1] == 0:
+                receiver_index += 1
+
+        settlements[manager_name] = (
+            "\n".join(payees) or "-",
+            "\n".join(f"{amount:.2f}" for amount in amounts) or "-",
+        )
+
+    return settlements
+
+
+def is_round_settlement_available(round_weeks, latest_confirmed_week):
+    return bool(round_weeks) and round_weeks[-1] <= latest_confirmed_week
+
+
 def get_league_name(league_id: int):
     headers = {'User-Agent': 'Mozilla/5.0'}
     league_url = f"https://fantasy.premierleague.com/api/leagues-classic/{league_id}/standings/?page_standings=1"
@@ -482,6 +524,9 @@ def get_weekly_overview(league_id: int):
         columns.append((round_label, 'Subtotal', 'Round Rank'))
         columns.append((round_label, 'Subtotal', 'Round Tokens'))
         columns.append((round_label, 'Subtotal', 'Round Subtotal'))
+        if is_round_settlement_available(round_weeks, latest_confirmed_week):
+            columns.append((round_label, 'Settlement', 'Pay To'))
+            columns.append((round_label, 'Settlement', 'Pay Amount'))
 
     for _, manager_name in managers:
         row = {
@@ -538,6 +583,23 @@ def get_weekly_overview(league_id: int):
         rows.append(row)
 
     df = pd.DataFrame(rows, columns=pd.MultiIndex.from_tuples(columns))
+    for round_no in round_groups:
+        round_label = f'Round {round_no}'
+        round_weeks = round_groups[round_no]
+        if not is_round_settlement_available(round_weeks, latest_confirmed_week):
+            continue
+        subtotal_column = (round_label, 'Subtotal', 'Round Subtotal')
+        pay_to_column = (round_label, 'Settlement', 'Pay To')
+        pay_amount_column = (round_label, 'Settlement', 'Pay Amount')
+        settlements = calculate_waterfall_settlements(
+            dict(zip(df[('Summary', '', 'Team Member')], df[subtotal_column]))
+        )
+        df[pay_to_column] = df[('Summary', '', 'Team Member')].map(
+            lambda manager_name: settlements[manager_name][0]
+        )
+        df[pay_amount_column] = df[('Summary', '', 'Team Member')].map(
+            lambda manager_name: settlements[manager_name][1]
+        )
     return df
 
 def get_league_data(league_id: int, gameweek: int):
@@ -701,10 +763,18 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
             for round_name in dict.fromkeys(column[0] for column in columns if column[0] != 'Summary'):
                 round_columns = [column for column in columns if column[0] == round_name]
                 ordered_columns.extend(column for column in round_columns if column[1] == 'Subtotal')
+                ordered_columns.extend(column for column in round_columns if column[1] == 'Settlement')
                 ordered_columns.extend(column for column in round_columns if column[1].startswith('GW '))
             ordered_columns.extend(column for column in columns if column[0] == 'Summary' and column not in ordered_columns)
             ordered_columns.extend(column for column in columns if column not in ordered_columns)
             df_display = df_display[ordered_columns]
+            settlement_columns = [
+                column for column in ordered_columns if column[2] in ('Pay To', 'Pay Amount')
+            ]
+            for column in settlement_columns:
+                df_display[column] = df_display[column].map(
+                    lambda value: str(value).replace(', ', '\n') if pd.notna(value) else value
+                )
             group_labels = []
             for column in ordered_columns[1:]:
                 group_labels.append(
@@ -745,7 +815,21 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
         
         # Create figure and axis with more space for the grouped headers.
         header_rows = len(table_headers)
-        figure_height = max(3.2, len(df_display) * 0.38 + (1.8 if is_grouped else 1.0))
+        settlement_line_count = 1
+        if is_grouped:
+            settlement_line_count = max(
+                (
+                    str(value).count('\n') + 1
+                    for column in settlement_columns
+                    for value in df_display[column].dropna()
+                ),
+                default=1,
+            )
+        figure_height = max(
+            3.2,
+            len(df_display) * (0.38 + 0.24 * (settlement_line_count - 1))
+            + (1.8 if is_grouped else 1.0),
+        )
         fig, ax = plt.subplots(figsize=(20, figure_height))
         ax.axis('tight')
         ax.axis('off')

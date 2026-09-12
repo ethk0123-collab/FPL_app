@@ -346,6 +346,8 @@ def order_weekly_overview_columns(df, round_label):
             f"{current_round_label} / Subtotal / Round Rank",
             f"{current_round_label} / Subtotal / Round Tokens",
             f"{current_round_label} / Subtotal / Round Subtotal",
+            f"{current_round_label} / Settlement / Pay To",
+            f"{current_round_label} / Settlement / Pay Amount",
         ]
         gameweek_columns = [
             column for column in columns
@@ -414,7 +416,10 @@ def render_weekly_overview_table(dataframe, round_label):
     round_columns = [column for column in columns if column[0] == round_label]
     ordered_columns = [team_member_column]
     ordered_columns.extend(column for column in round_columns if column[1] == 'Subtotal')
-    ordered_columns.extend(column for column in round_columns if column[1] != 'Subtotal')
+    ordered_columns.extend(column for column in round_columns if column[1] == 'Settlement')
+    ordered_columns.extend(
+        column for column in round_columns if column[1] not in ('Subtotal', 'Settlement')
+    )
     ordered_columns.extend(column for column in summary_columns if column in columns)
 
     display_groups = {
@@ -457,8 +462,13 @@ def render_weekly_overview_table(dataframe, round_label):
                 classes.append(f'group-{group_index[display_groups[column]] % 2}')
             if column[2] in ('Round Subtotal', 'Total Prison Tokens'):
                 classes.append('emphasis-cell')
+            if column[2] in ('Pay To', 'Pay Amount'):
+                classes.append('settlement-cell')
             class_attribute = f' class="{" ".join(classes)}"' if classes else ''
-            html.append(f'<td{class_attribute}>{escape(str(value))}</td>')
+            display_value = escape(str(value))
+            if column[2] in ('Pay To', 'Pay Amount'):
+                display_value = display_value.replace('\n', '<br>').replace(', ', '<br>')
+            html.append(f'<td{class_attribute}>{display_value}</td>')
         html.append('</tr>')
     html.append(
         '</tbody></table></div>'
@@ -476,6 +486,7 @@ def render_weekly_overview_table(dataframe, round_label):
         '.weekly-overview-table .group-0 { background: #fff2cc; }'
         '.weekly-overview-table .group-1 { background: #e2f0d9; }'
         '.weekly-overview-table .emphasis-cell { font-weight: 700; }'
+        '.weekly-overview-table .settlement-cell { white-space: pre-line; }'
         '</style>'
     )
     st.html(''.join(html))
@@ -486,7 +497,7 @@ def load_data(league_id, gw):
     return get_league_data(league_id, gw)
 
 @st.cache_data(ttl=300)
-def load_weekly_overview(league_id):
+def load_weekly_overview(league_id, cache_version):
     return get_weekly_overview(league_id)
 
 latest_gameweek = get_latest_gameweek()
@@ -622,7 +633,7 @@ else:
     if league_id == PRISON_LEAGUE_ID:
         st.subheader("📅 Weekly Overview")
         with st.spinner("Loading weekly results..."):
-            weekly_overview_df = load_weekly_overview(league_id)
+            weekly_overview_df = load_weekly_overview(league_id, cache_version=2)
 
         round_options = [0] + list(range(1, 10))
         default_round_index = round_options.index(latest_round)
@@ -651,6 +662,14 @@ else:
         if selected_round == 0:
             export_df = weekly_overview_df
             display_df = flatten_weekly_overview_columns(display_df)
+            latest_round_label = f"Round {latest_round}"
+            subtotal_column = f"{latest_round_label} / Subtotal / Round Subtotal"
+            if subtotal_column in display_df.columns:
+                display_df = display_df.sort_values(
+                    subtotal_column,
+                    ascending=False,
+                    kind="stable",
+                )
             display_df = order_weekly_overview_columns(display_df, None)
             st.dataframe(
                 display_df.style.apply(style_weekly_overview, axis=None),
@@ -659,6 +678,12 @@ else:
                 column_config=weekly_overview_column_config(display_df),
             )
         else:
+            subtotal_column = (selected_round_label, 'Subtotal', 'Round Subtotal')
+            display_df = display_df.sort_values(
+                subtotal_column,
+                ascending=False,
+                kind="stable",
+            )
             export_df = display_df
             render_weekly_overview_table(display_df, selected_round_label)
         
