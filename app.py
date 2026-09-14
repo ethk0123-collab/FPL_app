@@ -11,6 +11,7 @@ from fpl_api import (
     PRISON_LEAGUE_ID,
     calculate_weekly_prison_tokens,
     get_global_top_player_minutes_played,
+    get_global_top_player_points_by_difficulty,
     get_global_top_player_selections,
     get_global_top_player_weekly_points,
     get_latest_gameweek,
@@ -40,6 +41,11 @@ def load_global_top_player_weekly_points(gameweek):
 @st.cache_data(ttl=300)
 def load_global_top_player_minutes_played(gameweek):
     return get_global_top_player_minutes_played(gameweek)
+
+
+@st.cache_data(ttl=300)
+def load_global_top_player_points_by_difficulty(gameweek):
+    return get_global_top_player_points_by_difficulty(gameweek)
 
 
 @st.cache_data(ttl=3600)
@@ -166,7 +172,7 @@ if st.session_state.page == "top_players":
     if selected_club != "All":
         filtered_weekly_points_df = filtered_weekly_points_df[filtered_weekly_points_df["Club"] == selected_club]
 
-    if st.session_state.linked_selected_player and st.session_state.linked_selected_source == "minutes":
+    if st.session_state.linked_selected_player and st.session_state.linked_selected_source != "weekly":
         filtered_weekly_points_df = filtered_weekly_points_df[
             filtered_weekly_points_df["Player Name"] == st.session_state.linked_selected_player
         ]
@@ -196,6 +202,71 @@ if st.session_state.page == "top_players":
         st.session_state.linked_selected_player = None
         st.session_state.linked_selected_source = None
 
+    st.subheader("Weekly Points by Difficulty")
+    with st.spinner("Fetching weekly points by difficulty..."):
+        points_by_difficulty_df = load_global_top_player_points_by_difficulty(latest_gameweek)
+
+    difficulty_position_options = sorted(points_by_difficulty_df["Position"].dropna().unique().tolist())
+    selected_difficulty_positions = st.pills(
+        "Position",
+        difficulty_position_options,
+        selection_mode="multi",
+        default=difficulty_position_options,
+        key="difficulty_position_filter",
+    )
+
+    difficulty_club_options = ["All"] + sorted(points_by_difficulty_df["Club"].dropna().unique().tolist())
+    selected_difficulty_club = st.selectbox("Club", difficulty_club_options, key="difficulty_club_filter")
+
+    filtered_points_by_difficulty_df = points_by_difficulty_df[
+        points_by_difficulty_df["Position"].isin(selected_difficulty_positions)
+    ]
+    if selected_difficulty_club != "All":
+        filtered_points_by_difficulty_df = filtered_points_by_difficulty_df[
+            filtered_points_by_difficulty_df["Club"] == selected_difficulty_club
+        ]
+
+    if st.session_state.linked_selected_player and st.session_state.linked_selected_source != "difficulty":
+        filtered_points_by_difficulty_df = filtered_points_by_difficulty_df[
+            filtered_points_by_difficulty_df["Player Name"] == st.session_state.linked_selected_player
+        ]
+
+    filtered_points_by_difficulty_df = filtered_points_by_difficulty_df.sort_values("Average Points", ascending=False)
+
+    difficulty_number_columns = {
+        "Total Points": st.column_config.NumberColumn("Total Points", format="%d"),
+        "Average Points": st.column_config.NumberColumn("Average Points", format="%.2f"),
+    }
+    for level in range(1, 6):
+        difficulty_number_columns[f"Total Pts (FDR {level})"] = st.column_config.NumberColumn(
+            f"Total Pts (FDR {level})", format="%d"
+        )
+        difficulty_number_columns[f"Avg Pts (FDR {level})"] = st.column_config.NumberColumn(
+            f"Avg Pts (FDR {level})", format="%.2f"
+        )
+
+    points_by_difficulty_event = st.dataframe(
+        filtered_points_by_difficulty_df,
+        width="stretch",
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="points_by_difficulty_table",
+        column_config={
+            "Player Name": st.column_config.TextColumn("Player Name", pinned=True),
+            "Club": st.column_config.TextColumn("Club"),
+            "Position": st.column_config.TextColumn("Position"),
+            **difficulty_number_columns,
+        },
+    )
+    difficulty_selected_rows = points_by_difficulty_event.selection.rows if points_by_difficulty_event else []
+    if difficulty_selected_rows:
+        st.session_state.linked_selected_player = filtered_points_by_difficulty_df.iloc[difficulty_selected_rows[0]]["Player Name"]
+        st.session_state.linked_selected_source = "difficulty"
+    elif st.session_state.linked_selected_source == "difficulty":
+        st.session_state.linked_selected_player = None
+        st.session_state.linked_selected_source = None
+
     st.subheader("Minutes Played Overview")
     with st.spinner("Fetching minutes played..."):
         minutes_played_df = load_global_top_player_minutes_played(latest_gameweek)
@@ -216,7 +287,7 @@ if st.session_state.page == "top_players":
     if selected_minutes_club != "All":
         filtered_minutes_played_df = filtered_minutes_played_df[filtered_minutes_played_df["Club"] == selected_minutes_club]
 
-    if st.session_state.linked_selected_player and st.session_state.linked_selected_source == "weekly":
+    if st.session_state.linked_selected_player and st.session_state.linked_selected_source != "minutes":
         filtered_minutes_played_df = filtered_minutes_played_df[
             filtered_minutes_played_df["Player Name"] == st.session_state.linked_selected_player
         ]

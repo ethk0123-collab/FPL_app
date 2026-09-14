@@ -213,6 +213,80 @@ def get_global_top_player_weekly_points(gameweek: int, manager_limit: int = 100,
     )
 
 
+def build_player_points_by_difficulty_matrix(player_ids, players_map, teams_map, positions_map, session, headers):
+    """Build a matrix of total/average points split by fixture difficulty rating (1-5) for each player."""
+    difficulty_levels = [1, 2, 3, 4, 5]
+    columns = ['Player Name', 'Club', 'Position', 'Total Points', 'Average Points']
+    for level in difficulty_levels:
+        columns += [f'Total Pts (FDR {level})', f'Avg Pts (FDR {level})']
+
+    try:
+        fixtures = requests.get(
+            'https://fantasy.premierleague.com/api/fixtures/', headers=headers, timeout=10
+        ).json()
+    except requests.RequestException:
+        fixtures = []
+    fixtures_by_id = {fixture['id']: fixture for fixture in fixtures if fixture.get('id') is not None}
+
+    rows = []
+    for player_id in player_ids:
+        player = players_map.get(player_id)
+        if not player:
+            continue
+
+        total_points = 0
+        matches_played = 0
+        points_by_difficulty = {level: 0 for level in difficulty_levels}
+        matches_by_difficulty = {level: 0 for level in difficulty_levels}
+        try:
+            summary_url = f"https://fantasy.premierleague.com/api/element-summary/{player_id}/"
+            summary = session.get(summary_url, headers=headers, timeout=10).json()
+            for gw_entry in summary.get('history', []):
+                points = gw_entry.get('total_points', 0)
+                minutes = gw_entry.get('minutes', 0)
+                total_points += points
+                if minutes > 0:
+                    matches_played += 1
+
+                fixture = fixtures_by_id.get(gw_entry.get('fixture'))
+                if not fixture:
+                    continue
+                difficulty = (
+                    fixture.get('team_h_difficulty')
+                    if gw_entry.get('was_home')
+                    else fixture.get('team_a_difficulty')
+                )
+                if difficulty in points_by_difficulty:
+                    points_by_difficulty[difficulty] += points
+                    if minutes > 0:
+                        matches_by_difficulty[difficulty] += 1
+        except requests.RequestException:
+            pass
+
+        row = {
+            'Player Name': player.get('web_name', ''),
+            'Club': teams_map.get(player.get('team'), ''),
+            'Position': positions_map.get(player.get('element_type'), ''),
+            'Total Points': total_points,
+            'Average Points': round(total_points / matches_played, 2) if matches_played > 0 else 0,
+        }
+        for level in difficulty_levels:
+            level_matches = matches_by_difficulty[level]
+            row[f'Total Pts (FDR {level})'] = points_by_difficulty[level]
+            row[f'Avg Pts (FDR {level})'] = round(points_by_difficulty[level] / level_matches, 2) if level_matches > 0 else 0
+        rows.append(row)
+
+    return pd.DataFrame(rows, columns=columns)
+
+
+def get_global_top_player_points_by_difficulty(gameweek: int, manager_limit: int = 100):
+    players_map, teams_map, positions_map, session, headers = fetch_all_players()
+    player_ids = sorted(players_map.keys())
+    return build_player_points_by_difficulty_matrix(
+        player_ids, players_map, teams_map, positions_map, session, headers
+    )
+
+
 def build_player_minutes_played_matrix(player_ids, players_map, teams_map, positions_map, session, headers, total_gameweeks=38):
     columns = ['Player Name', 'Club', 'Position', 'Total Minutes', '# of Match >0 min'] + [
         f'Wk{gw}' for gw in range(1, total_gameweeks + 1)
