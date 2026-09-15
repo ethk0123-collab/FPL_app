@@ -923,7 +923,7 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
             if column_index == 0:
                 base = 1.6
             elif is_grouped and column[2] in ('Pay To', 'Pay Amount'):
-                base = 1.2
+                base = 1.9
             else:
                 base = 0.7
             return max(base, 0.16 * longest_line)
@@ -972,7 +972,7 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
             for width in normalized_widths:
                 boundaries.append(boundaries[-1] + width)
 
-            def add_header_cell(x, y, width, height, label):
+            def add_header_cell(x, y, width, height, label, wrap_width=10):
                 ax.add_patch(Rectangle(
                     (x, y), width, height,
                     transform=ax.transAxes,
@@ -983,7 +983,7 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
                 ax.text(
                     x + width / 2,
                     y + height / 2,
-                    '\n'.join(wrap(label, width=10)),
+                    '\n'.join(wrap(label, width=wrap_width, break_long_words=False)),
                     transform=ax.transAxes,
                     ha='center',
                     va='center',
@@ -1003,7 +1003,7 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
                     group,
                 )
             for column_index, column in enumerate(ordered_columns[1:], start=1):
-                add_header_cell(boundaries[column_index], 0.72, normalized_widths[column_index], 0.12, str(column[2]))
+                add_header_cell(boundaries[column_index], 0.72, normalized_widths[column_index], 0.12, str(column[2]), wrap_width=6)
         else:
             for row_index in range(header_rows):
                 for column_index in range(len(df_display.columns)):
