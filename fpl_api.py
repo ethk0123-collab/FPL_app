@@ -904,9 +904,6 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
             len(df_display) * (0.38 + 0.24 * (settlement_line_count - 1))
             + (1.8 if is_grouped else 1.0),
         )
-        fig, ax = plt.subplots(figsize=(20, figure_height))
-        ax.axis('tight')
-        ax.axis('off')
 
         table_data = []
         if not is_grouped:
@@ -915,9 +912,32 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
         for _, row in df_display.iterrows():
             table_data.append(row.tolist())
 
-        # Calculate column widths - make first column wider for Team Member
-        col_widths = [0.10] + [0.06] * (len(df_display.columns) - 1)
+        # Size each column (in inches) from its widest header/content so text doesn't overlap.
+        def column_width_inches(column_index, column):
+            label = str(column[2]) if is_grouped else str(column)
+            values = df_display[column].astype(str) if is_grouped else df_display.iloc[:, column_index].astype(str)
+            longest_line = max(
+                [len(label)] + [len(line) for value in values for line in value.split('\n')],
+                default=len(label),
+            )
+            if column_index == 0:
+                base = 1.6
+            elif is_grouped and column[2] in ('Pay To', 'Pay Amount'):
+                base = 1.2
+            else:
+                base = 0.7
+            return max(base, 0.16 * longest_line)
+
+        columns_iterable = list(df_display.columns)
+        col_widths = [
+            column_width_inches(index, column) for index, column in enumerate(columns_iterable)
+        ]
         normalized_widths = [width / sum(col_widths) for width in col_widths]
+        figure_width = max(20, sum(col_widths))
+        fig, ax = plt.subplots(figsize=(figure_width, figure_height))
+        ax.axis('tight')
+        ax.axis('off')
+
         table = ax.table(
             cellText=table_data,
             cellLoc='center',
