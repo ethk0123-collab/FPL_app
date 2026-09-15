@@ -927,14 +927,15 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
         )
 
         table.auto_set_font_size(False)
-        table.set_fontsize(8)
-        table.scale(1, 1.8 if header_rows == 1 else 1.35)
+        table.set_fontsize(11)
+        table.scale(1, 1.3 if header_rows == 1 else 1.05)
 
         # Style data rows with alternating colors
         first_data_row = 0 if is_grouped else header_rows
         for i in range(first_data_row, len(table_data)):
             for j in range(len(df_display.columns)):
                 cell = table[(i, j)]
+                cell.PAD = 0.02
                 if j == 0:
                     cell.set_facecolor('#F2F2F2')
                 elif (j - 1) % 2 == 0:
@@ -968,7 +969,7 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
                     va='center',
                     color='white',
                     fontweight='bold',
-                    fontsize=7,
+                    fontsize=10,
                 )
 
             add_header_cell(0, 0.92, 1, 0.06, table_headers[0][0])
@@ -987,6 +988,7 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
             for row_index in range(header_rows):
                 for column_index in range(len(df_display.columns)):
                     cell = table[(row_index, column_index)]
+                    cell.PAD = 0.02
                     cell.set_facecolor('#4472C4')
                     cell.set_text_props(weight='bold', color='white', ha='center', va='center')
                     cell.set_height(0.06 if header_rows == 1 else 0.045)
