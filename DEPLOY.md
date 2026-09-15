@@ -36,9 +36,9 @@ git push origin main
 
 ```toml
 [email]
-sender = "etethk123@gmail.com"
-password = "fk031102"
-recipient = "ethk0123@gmail.com"
+sender = "your-gmail-address@gmail.com"
+password = "your-gmail-app-password"
+recipient = "recipient-email@gmail.com"
 ```
 
 5. Click **"Save"**
