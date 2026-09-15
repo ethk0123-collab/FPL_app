@@ -933,7 +933,7 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
             column_width_inches(index, column) for index, column in enumerate(columns_iterable)
         ]
         normalized_widths = [width / sum(col_widths) for width in col_widths]
-        figure_width = max(20, sum(col_widths))
+        figure_width = max(20, sum(col_widths)) * 1.2
         fig, ax = plt.subplots(figsize=(figure_width, figure_height))
         ax.axis('tight')
         ax.axis('off')

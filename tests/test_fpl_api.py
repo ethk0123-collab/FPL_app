@@ -4,6 +4,7 @@ from fpl_api import (
     build_player_selection_summary,
     calculate_live_team_points,
     calculate_waterfall_settlements,
+    dataframe_to_png,
     get_gameweek_data_status,
     get_league_title,
     get_summary_columns,
@@ -125,3 +126,20 @@ def test_round_rank_includes_live_gameweek_for_in_progress_round():
     }
 
     assert round_points_by_manager == {'A': 60, 'B': 60}
+
+
+def test_dataframe_to_png_uses_a_canvas_20_percent_wider_than_base_width(tmp_path, monkeypatch):
+    import matplotlib.pyplot as plt
+
+    captured = {}
+    original_subplots = plt.subplots
+
+    def capture_subplots(*args, **kwargs):
+        captured['figsize'] = kwargs['figsize']
+        return original_subplots(*args, **kwargs)
+
+    monkeypatch.setattr(plt, 'subplots', capture_subplots)
+
+    dataframe_to_png(pd.DataFrame({'Team Member': ['master zero']}), tmp_path / 'overview.png')
+
+    assert captured['figsize'][0] == 24
