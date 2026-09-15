@@ -545,7 +545,7 @@ def render_weekly_overview_table(dataframe, round_label):
         '</tbody></table></div>'
         '<style>'
         '.weekly-overview-table-wrapper { overflow-x: auto; }'
-        '.weekly-overview-table { border-collapse: collapse; width: 100%; min-width: 900px; table-layout: auto; }'
+        '.weekly-overview-table { border-collapse: collapse; width: auto; min-width: 900px; table-layout: auto; }'
         '.weekly-overview-table th, .weekly-overview-table td { '
         'border: 1px solid #d9d9d9; padding: 0.35rem 0.55rem; text-align: right; white-space: nowrap; }'
         '.weekly-overview-table thead th { background: #1f4e78; color: white; font-weight: 700; text-align: center; }'
@@ -558,7 +558,7 @@ def render_weekly_overview_table(dataframe, round_label):
         '.weekly-overview-table .group-0 { background: #fff2cc; }'
         '.weekly-overview-table .group-1 { background: #e2f0d9; }'
         '.weekly-overview-table .emphasis-cell { font-weight: 700; }'
-        '.weekly-overview-table .settlement-cell { white-space: normal; min-width: 6.5rem; overflow-wrap: break-word; }'
+        '.weekly-overview-table .settlement-cell { white-space: nowrap; min-width: 6.5rem; }'
         '</style>'
     )
     st.html(''.join(html))
