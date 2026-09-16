@@ -951,7 +951,7 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
         )
 
         table.auto_set_font_size(False)
-        table.set_fontsize(11)
+        table.set_fontsize(13)
         table.scale(1, 1.3 if header_rows == 1 else 1.05)
 
         # Style data rows with alternating colors
@@ -1000,7 +1000,7 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
                     va='center',
                     color='white',
                     fontweight='bold',
-                    fontsize=10,
+                    fontsize=12,
                 )
 
             add_header_cell(0, 0.92, 1, 0.06, table_headers[0][0])
@@ -1023,7 +1023,7 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
                     cell.set_facecolor('#4472C4')
                     cell.set_text_props(weight='bold', color='white', ha='center', va='center')
                     cell.set_height(0.06 if header_rows == 1 else 0.045)
-            plt.title(title, fontsize=14, fontweight='bold', pad=20)
+            plt.title(title, fontsize=16, fontweight='bold', pad=20)
         
         # Save to file
         plt.savefig(output_path, bbox_inches='tight', dpi=100, facecolor='white')
