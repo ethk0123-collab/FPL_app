@@ -823,6 +823,8 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
     Returns:
         path to the generated PNG file
     """
+    import os
+
     import matplotlib.pyplot as plt
     from matplotlib.patches import Rectangle
     from textwrap import wrap
@@ -881,6 +883,8 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
         else:
             table_headers = [[str(column) for column in df_display.columns]]
         
+        output_path = os.fspath(output_path)
+
         # Ensure the output path ends with .png
         if not output_path.endswith('.png'):
             output_path = output_path.replace('.jpeg', '.png').replace('.html', '.png')
@@ -958,6 +962,13 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
                 cell.PAD = 0.02
                 if j == 0:
                     cell.set_facecolor('#F2F2F2')
+                elif is_grouped:
+                    column_label = df_display.columns[j][2]
+                    cell.set_facecolor(
+                        '#E2F0D9'
+                        if column_label in ('Round Subtotal', 'Round Tokens', 'Token', 'Pay To', 'Pay Amount', 'Total Prison Tokens')
+                        else '#FFF2CC'
+                    )
                 elif (j - 1) % 2 == 0:
                     cell.set_facecolor('#FFF2CC')
                 else:
@@ -966,7 +977,7 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
                 cell.set_text_props(ha='center', va='center', weight='bold' if is_round_subtotal else 'normal')
 
         if is_grouped:
-            header_color = '#4472C4'
+            header_color = '#1F4E78'
             edge_color = '#D9E2F3'
             boundaries = [0]
             for width in normalized_widths:
@@ -1003,7 +1014,7 @@ def dataframe_to_png(df, output_path, title="Weekly Overview"):
                     group,
                 )
             for column_index, column in enumerate(ordered_columns[1:], start=1):
-                add_header_cell(boundaries[column_index], 0.72, normalized_widths[column_index], 0.12, str(column[2]), wrap_width=6)
+                add_header_cell(boundaries[column_index], 0.72, normalized_widths[column_index], 0.12, str(column[2]), wrap_width=12)
         else:
             for row_index in range(header_rows):
                 for column_index in range(len(df_display.columns)):
